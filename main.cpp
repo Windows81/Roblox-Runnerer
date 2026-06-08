@@ -108,10 +108,10 @@ void patch_dll(const std::filesystem::path path) {
 auto construct_qstring(HMODULE qt5core, char const *data) {
   auto result = malloc(67);
   // public: static class QString __cdecl QString::fromAscii(char const *, int)
-  result = FUNCTION_THING(__cdecl, "?fromAscii@QString@@SA?AV1@PEBDH@Z", void *,
-                          (const void *, char const *, int),
-                          (result, data, strlen(data)));
-  return result;
+  auto result1 = FUNCTION_THING(__cdecl, "?fromAscii@QString@@SA?AV1@PEBDH@Z",
+                                void *, (const void *, char const *, int),
+                                (result, data, strlen(data)));
+  return result1;
 }
 
 auto change_qapplicationdir(HMODULE qt5core, char const *data) {
@@ -168,7 +168,7 @@ int main() {
   patch_dll(dll_path.c_str());
   load_dependent_user_libraries(dir);
 
-  // change_qapplicationdir(qt5core, dll_path.string().c_str());
+  change_qapplicationdir(qt5core, dll_path.string().c_str());
 
   /*
   auto qputenv = GetProcAddress(
