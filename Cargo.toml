@@ -16,3 +16,6 @@ features = [
 # ICE be like...
 version = "1.21.0"
 features = ["code_asm"]
+
+[dependencies.cstring-array]
+version = "0.1.1"

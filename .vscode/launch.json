@@ -1,0 +1,16 @@
+{
+	"configurations": [
+		{
+			"name": "Debug executable 'roblox-runnerer'",
+			"type": "lldb",
+			"request": "launch",
+			"cargo": {
+				"args": [
+					"run",
+					"--bin=roblox-runnerer"
+				]
+			},
+			"args": []
+		},
+	]
+}

@@ -1,5 +1,5 @@
 use std::{
-    fs::OpenOptions,
+    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
 };
@@ -8,9 +8,10 @@ use iced_x86::code_asm::*;
 
 /// Patches the target DLL to change its entry point to `mov rax, 1; ret`
 /// and forces the IMAGE_FILE_DLL characteristic bit.
-pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut read_file = OpenOptions::new().read(true).open(read_path)?;
-    let mut write_file = OpenOptions::new().write(true).open(write_path)?;
+pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut read_file = File::open(read_path)?;
+    let mut write_file = File::create(write_path)?;
+
     std::io::copy(&mut read_file, &mut write_file)?;
 
     let mut e_lfanew_buf = [0u8; 4];
@@ -30,6 +31,9 @@ pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<(), Box<dyn std:
             _ => panic!(),
         }
     };
+    if bitness != usize::BITS {
+        return Err("Bitness does not match; LoadLibrary does not allow cross-arch usage.".into());
+    }
 
     let characteristics = {
         let mut buf = [0u8; 2];
@@ -80,8 +84,12 @@ pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<(), Box<dyn std:
         u32::from_le_bytes(buf)
     };
 
-    assert!(entry_point_rva >= virtual_addr);
-    assert!(entry_point_rva < virtual_addr + raw_data_size);
+    if entry_point_rva < virtual_addr {
+        return Err("Entry point is lower than bounds of the first PE memory section".into());
+    }
+    if entry_point_rva >= virtual_addr + raw_data_size {
+        return Err("Entry point is higher than bounds of the first PE memory section".into());
+    }
 
     let entry_point_file_offset = entry_point_rva
         .wrapping_add(raw_data_pointer)
@@ -101,5 +109,5 @@ pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<(), Box<dyn std:
     let new_charactertics = characteristics | 0x2000; // Sets IMAGE_FILE_DLL bit to 1.
     write_file.seek(SeekFrom::Start(file_header_offset + 0x16))?;
     write_file.write_all(&new_charactertics.to_le_bytes())?;
-    Ok(())
+    Ok(entry_point_rva as usize)
 }

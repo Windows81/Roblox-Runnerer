@@ -1,6 +1,12 @@
+pub mod find;
+
+pub mod macros;
 pub mod patch;
 
-use std::{ffi::CString, mem::transmute, path::Path};
+use std::ffi::c_char;
+use std::{ffi::CString, path::Path};
+
+use cstring_array::CStringArray;
 use windows::{
     Win32::{
         Foundation::{HANDLE, HMODULE},
@@ -16,26 +22,6 @@ use windows::{
     },
     core::HSTRING,
 };
-
-macro_rules! dll_offset_func {
-    ($handle:expr, $offset:expr, $ret:ty, ($($arg_ty:ty),*), $conv:literal) => { unsafe {
-        let addr = ($handle as usize).wrapping_add($offset);
-        // Define the function pointer type with the specific calling convention
-        type FuncType = extern $conv fn($($arg_ty),*) -> $ret;
-        let func: FuncType = transmute(addr);
-        func
-    }};
-}
-
-macro_rules! getproc_offset_func {
-    ($handle:expr, $c_name:expr, $ret:ty, ($($arg_ty:ty),*), $conv:literal) => { unsafe {
-        let addr = GetProcAddress($handle, $c_name);
-        // Define the function pointer type with the specific calling convention
-        type FuncType = extern $conv fn($($arg_ty),*) -> $ret;
-        let func: FuncType = transmute(addr);
-        func
-    }};
-}
 
 /// Constructs a QString on the stack and calls fromAscii.
 /// Returns a pointer to the stack-allocated buffer.
@@ -100,16 +86,14 @@ fn change_qapplication_dir(qt5core: HMODULE, dll_path_str: &Path) {
         (&*mut u8),
         "C"
     );
-    unsafe {
-        let mut internal_data_ptr = Box::<_>::new(std::ptr::null_mut());
-        construct_qstring(
-            qt5core,
-            &mut *internal_data_ptr,
-            dll_path_str.to_str().unwrap(),
-        );
-        test_qstring(&*internal_data_ptr);
-        set_application_file_path(&*internal_data_ptr);
-    };
+    let mut internal_data_ptr = Box::<_>::new(std::ptr::null_mut());
+    construct_qstring(
+        qt5core,
+        &mut *internal_data_ptr,
+        dll_path_str.to_str().unwrap(),
+    );
+    test_qstring(&*internal_data_ptr);
+    set_application_file_path(&*internal_data_ptr);
 }
 
 /// Loads the required dependent DLLs from the specified directory.
@@ -134,9 +118,10 @@ fn load_dependent_user_libraries(dir: &Path) -> Result<(), Box<dyn std::error::E
 }
 
 fn main() {
+    //let dir_path = Path::new(r"C:\Users\USER\Projects\FilteringDisabled\Roblox\v463\Studio\");
     let dir_path = Path::new(r"C:\Program Files\RobloxStudio548\");
-    let dll_path = dir_path.join("RobloxStudioBeta.dll");
     let exe_path = dir_path.join("RobloxStudioBeta.exe");
+    let dll_path = dir_path.join("RobloxStudioBeta.dll");
 
     let qt5core_path = dir_path.join("Qt5Core.dll");
 
@@ -156,10 +141,10 @@ fn main() {
     }
     .unwrap();
 
-    let b = unsafe { SetCurrentDirectoryW(&HSTRING::from(dir_path.as_os_str())) };
+    let _ = unsafe { SetCurrentDirectoryW(&HSTRING::from(dir_path.as_os_str())) };
     change_qapplication_dir(qt5core, &dll_path);
 
-    let _ = patch::patch_dll(&exe_path, &dll_path);
+    let dll_main = patch::patch_dll(&exe_path, &dll_path).unwrap() as u64;
     let _ = load_dependent_user_libraries(&dir_path);
 
     // Load the patched DLL
@@ -171,7 +156,8 @@ fn main() {
         )
     }
     .unwrap()
-    .0 as usize;
+    .0 as u64;
 
-    dll_offset_func!(h_get_proc_id_dll, 0x2F32CB4, i32, (), "C")();
+    let main = find::find_main(h_get_proc_id_dll, dll_main);
+    main();
 }
