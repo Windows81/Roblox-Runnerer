@@ -52,7 +52,7 @@ pub trait DataModel: Send + Sync {
     fn is_closed(&self) -> bool;
     fn set_ui_message(&self, message: &str);
     fn clear_ui_message(&self);
-    fn submit_task(&self, task: Box<dyn FnOnce() + Send>, access: JobAccess);
+    fn submit_task(&self, task: Box<dyn FnOnce() + Send + Sync>, access: JobAccess);
     fn find_gui_service(&self) -> Option<Arc<dyn GuiService>>;
     fn find_user_input_service(&self) -> Option<Arc<dyn UserInputService>>;
     fn get_screenshot_seo_info(&self) -> String;

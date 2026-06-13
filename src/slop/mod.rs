@@ -14,26 +14,24 @@ mod document;
 mod function_marshaller;
 mod game_verbs;
 mod rbx;
-mod rbx_web_view;
 mod render_job;
 mod resource;
-mod teleporter;
 mod user_input;
 mod view;
-mod web_browser_ax_dialog;
 
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::core::{PCWSTR, w};
+
+use resource::*;
 
 use app::Application;
-use resource::*;
 
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
-
-/// Global pointer to the single `Application`, matching the original `appPtr`.
 static mut APP_PTR: *mut Application = std::ptr::null_mut();
 
 /// `WndProc` — main window message handler.
@@ -43,7 +41,7 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    let app = || -> &mut Application { &mut *APP_PTR };
+    let app = || -> &mut Application { unsafe { &mut *APP_PTR } };
     match message {
         WM_TIMER => {
             // LogManager hang-detection heartbeat (NotifyFGThreadAlive).
@@ -68,14 +66,18 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             app().about_to_shutdown();
-            PostQuitMessage(0);
+            unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
         WM_SIZE => {
-            app().on_resize(wparam, loword(lparam.0 as u32) as i32, hiword(lparam.0 as u32) as i32);
+            app().on_resize(
+                wparam,
+                loword(lparam.0 as u32) as i32,
+                hiword(lparam.0 as u32) as i32,
+            );
             LRESULT(0)
         }
-        _ => DefWindowProcW(hwnd, message, wparam, lparam),
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
 
@@ -85,11 +87,15 @@ fn register_window_class(hinstance: windows::Win32::Foundation::HINSTANCE) -> u1
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wnd_proc),
         hInstance: hinstance,
-        hIcon: unsafe { LoadIconW(Some(hinstance), make_int_resource(IDI_WINDOW_ICON)).unwrap_or_default() },
+        hIcon: unsafe {
+            LoadIconW(hinstance, make_int_resource(IDI_WINDOW_ICON)).unwrap_or_default()
+        },
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
         lpszClassName: w!("RobloxPlayerWindow"),
         lpszMenuName: make_int_resource(IDC_WINDOWSCLIENT),
-        hIconSm: unsafe { LoadIconW(Some(hinstance), make_int_resource(IDI_WINDOW_ICON)).unwrap_or_default() },
+        hIconSm: unsafe {
+            LoadIconW(hinstance, make_int_resource(IDI_WINDOW_ICON)).unwrap_or_default()
+        },
         ..Default::default()
     };
     unsafe { RegisterClassExW(&wcex) }
@@ -135,7 +141,7 @@ fn main() -> windows::core::Result<()> {
             WINDOW_HEIGHT,
             None,
             None,
-            Some(hinstance.into()),
+            hinstance,
             None,
         )?
     };
@@ -149,7 +155,7 @@ fn main() -> windows::core::Result<()> {
         Err(e) => {
             let msg: Vec<u16> = format!("{e}\0").encode_utf16().collect();
             unsafe {
-                MessageBoxW(Some(hwnd), PCWSTR(msg.as_ptr()), w!("ROBLOX"), MB_OK);
+                MessageBoxW(hwnd, PCWSTR(msg.as_ptr()), w!("ROBLOX"), MB_OK);
             }
             application.about_to_shutdown();
             application.shutdown();
@@ -159,7 +165,7 @@ fn main() -> windows::core::Result<()> {
 
     // Keep-alive timer for the WM_TIMER hang-detection heartbeat.
     unsafe {
-        SetTimer(Some(hwnd), 0, 10 * 1000, None);
+        SetTimer(hwnd, 0, 10 * 1000, None);
         let _ = ShowWindow(hwnd, SW_HIDE);
         let _ = UpdateWindow(hwnd);
     }

@@ -14,8 +14,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
-use crate::function_marshaller::FunctionMarshaller;
-use crate::rbx::{DataModel, JobAccess};
+use super::function_marshaller::FunctionMarshaller;
+use super::rbx::{DataModel, JobAccess};
 
 /// `RBX::TaskScheduler::StepResult`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub enum StepResult {
 /// `RBX::RenderJob : public BaseRenderJob, public IMetric`.
 pub struct RenderJob {
     marshaller: *mut FunctionMarshaller,
-    roblox_view: *mut crate::view::View,
+    roblox_view: *mut super::view::View,
     stopped: AtomicBool,
     is_awake: AtomicBool,
     data_model: Weak<dyn DataModel>,
@@ -35,7 +35,7 @@ pub struct RenderJob {
 
 impl RenderJob {
     pub fn new(
-        roblox_view: *mut crate::view::View,
+        roblox_view: *mut super::view::View,
         marshaller: *mut FunctionMarshaller,
         data_model: Arc<dyn DataModel>,
     ) -> Self {

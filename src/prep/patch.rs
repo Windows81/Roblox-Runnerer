@@ -1,14 +1,21 @@
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use iced_x86::code_asm::*;
 
 /// Patches the target DLL to change its entry point to `mov rax, 1; ret`
 /// and forces the IMAGE_FILE_DLL characteristic bit.
-pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
+pub fn patch_dll(
+    dir_path: &Path,
+    exe_name: &str,
+    dll_name: &str,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let read_path = dir_path.join(exe_name);
+    let write_path = dir_path.join(dll_name);
+
     let mut read_file = File::open(read_path)?;
     let mut write_file = File::create(write_path)?;
 
@@ -109,5 +116,5 @@ pub fn patch_dll(read_path: &Path, write_path: &Path) -> Result<usize, Box<dyn s
     let new_charactertics = characteristics | 0x2000; // Sets IMAGE_FILE_DLL bit to 1.
     write_file.seek(SeekFrom::Start(file_header_offset + 0x16))?;
     write_file.write_all(&new_charactertics.to_le_bytes())?;
-    Ok(entry_point_rva as usize)
+    Ok(entry_point_rva)
 }

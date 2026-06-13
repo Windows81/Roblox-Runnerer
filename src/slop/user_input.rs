@@ -16,10 +16,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::rbx::{self, DataModel, Game, UserInputService};
+use super::rbx::{self, DataModel, Game, UserInputService};
 
 pub const WM_CALL_SETFOCUS: u32 = WM_USER + 187;
 
@@ -34,7 +36,7 @@ enum MouseButton {
 pub struct UserInput {
     wnd: HWND,
     pub game: Arc<dyn Game>,
-    parent_view: *mut crate::view::View,
+    parent_view: *mut super::view::View,
 
     // Mouse state
     is_mouse_captured: bool,
@@ -59,7 +61,7 @@ pub struct UserInput {
 
 impl UserInput {
     /// `UserInput::UserInput(HWND, game, View*)`.
-    pub fn new(wnd: HWND, game: Arc<dyn Game>, parent_view: *mut crate::view::View) -> Self {
+    pub fn new(wnd: HWND, game: Arc<dyn Game>, parent_view: *mut super::view::View) -> Self {
         let mouse_button_swap = read_swap_mouse_buttons();
 
         let mut this = Self {
@@ -132,7 +134,10 @@ impl UserInput {
         dinput::unacquire_mouse();
         // Reposition the Windows cursor to the expanded game-cursor position.
         let pos = self.game_cursor_position_expanded();
-        let mut p = POINT { x: pos.0 as i32, y: pos.1 as i32 };
+        let mut p = POINT {
+            x: pos.0 as i32,
+            y: pos.1 as i32,
+        };
         unsafe {
             let _ = ClientToScreen(self.wnd, &mut p);
             let _ = SetCursorPos(p.x, p.y);
@@ -152,7 +157,10 @@ impl UserInput {
             WM_MOUSEMOVE => {
                 self.on_mouse_inside();
                 if !self.is_mouse_acquired {
-                    let (x, y) = (loword(lparam.0 as u32) as f32, hiword(lparam.0 as u32) as f32);
+                    let (x, y) = (
+                        loword(lparam.0 as u32) as f32,
+                        hiword(lparam.0 as u32) as f32,
+                    );
                     self.send_mouse_event(EventType::MouseMovement, (x, y, 0.0), (0.0, 0.0, 0.0));
                 }
                 self.update_mouse();
@@ -161,7 +169,10 @@ impl UserInput {
             WM_MOUSEWHEEL => {
                 if !self.is_mouse_acquired {
                     let z = wparam.0 as i32 as f32;
-                    let (x, y) = (loword(lparam.0 as u32) as f32, hiword(lparam.0 as u32) as f32);
+                    let (x, y) = (
+                        loword(lparam.0 as u32) as f32,
+                        hiword(lparam.0 as u32) as f32,
+                    );
                     self.send_mouse_event(EventType::MouseWheel, (x, y, z), (0.0, 0.0, 0.0));
                 }
             }
@@ -248,7 +259,7 @@ impl UserInput {
             };
         }
         unsafe {
-            let _ = PostMessageW(Some(self.wnd), WM_CALL_SETFOCUS, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(self.wnd, WM_CALL_SETFOCUS, WPARAM(0), LPARAM(0));
         }
         match btn {
             MouseButton::Left => {
@@ -271,9 +282,8 @@ impl UserInput {
     fn read_buffered_keyboard_data(&mut self) {
         for (di_key, down) in dinput::read_keyboard_buffer() {
             if down {
-                let v_key = unsafe {
-                    MapVirtualKeyExW(di_key as u32, MAPVK_VSC_TO_VK, Some(HKL::default()))
-                };
+                let v_key =
+                    unsafe { MapVirtualKeyExW(di_key as u32, MAPVK_VSC_TO_VK, HKL::default()) };
                 let suppress = !matches!(
                     VIRTUAL_KEY(v_key as u16),
                     VK_F1 | VK_F4 | VK_F8 | VK_F11 | VK_SNAPSHOT
@@ -282,8 +292,7 @@ impl UserInput {
                     // Alt+F4 closes; matched accelerators post WM_COMMAND.
                     if VIRTUAL_KEY(v_key as u16) == VK_F4 {
                         unsafe {
-                            let _ =
-                                PostMessageW(Some(self.wnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                            let _ = PostMessageW(self.wnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                         }
                     }
                 }

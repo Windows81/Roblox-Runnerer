@@ -4,22 +4,37 @@
 //! switching, window placement persistence, the render job and user input.
 //! This file contained no anti-cheat code; it is a straight Win32 translation.
 
-#![allow(dead_code)]
+#[repr(C)]
+pub struct OSContext {
+    pub hWnd: HWND,
+    pub width: i32,
+    pub height: i32,
+    // insert OS specific stuff here.
+}
+
+impl Default for OSContext {
+    fn default() -> Self {
+        Self {
+            hWnd: HWND::default(),
+            width: 640,
+            height: 480,
+        }
+    }
+}
 
 use std::sync::Arc;
 
-use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::core::w;
 
-use crate::function_marshaller::FunctionMarshaller;
-use crate::rbx::{self, DataModel, Game};
-use crate::render_job::RenderJob;
-use crate::user_input::UserInput;
+use super::function_marshaller::FunctionMarshaller;
+use super::rbx::{self, DataModel, Game};
+use super::render_job::RenderJob;
+use super::user_input::UserInput;
 
-const SAVED_SCREEN_SIZE_REGISTRY_KEY: &str =
-    r"HKEY_CURRENT_USER\Software\ROBLOX Corporation\Roblox\Settings\RobloxPlayerV4WindowSizeAndPosition";
+const SAVED_SCREEN_SIZE_REGISTRY_KEY: &str = r"HKEY_CURRENT_USER\Software\ROBLOX Corporation\Roblox\Settings\RobloxPlayerV4WindowSizeAndPosition";
 
 /// `RBX::CRenderSettings::GraphicsMode`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -124,8 +139,11 @@ impl View {
     fn initialize_jobs(&mut self) {
         if let (Some(game), false) = (self.game.clone(), self.marshaller.is_null()) {
             if let Some(dm) = game.get_data_model() {
-                self.render_job =
-                    Some(Arc::new(RenderJob::new(self as *mut _, self.marshaller, dm)));
+                self.render_job = Some(Arc::new(RenderJob::new(
+                    self as *mut _,
+                    self.marshaller,
+                    dm,
+                )));
             }
         }
     }
@@ -161,16 +179,8 @@ impl View {
                 self.change_resolution();
                 unsafe {
                     let _ = ShowWindow(self.hwnd, SW_RESTORE);
-                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(self.hwnd));
-                    let _ = SetWindowPos(
-                        self.hwnd,
-                        Some(HWND_TOP),
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE,
-                    );
+                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.hwnd);
+                    let _ = SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
                 }
             } else if self.fullscreen && !self.changing_resolution && activating == WA_INACTIVE {
                 unsafe {
@@ -185,15 +195,7 @@ impl View {
                             | WS_CLIPCHILDREN)
                             .0 as isize,
                     );
-                    let _ = SetWindowPos(
-                        self.hwnd,
-                        Some(HWND_TOP),
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE,
-                    );
+                    let _ = SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
                 }
             }
         } else if let Some(ui) = self.user_input.as_mut() {
@@ -210,8 +212,7 @@ impl View {
     pub fn set_fullscreen(&mut self, value: bool) {
         if self.fullscreen != value {
             if value {
-                self.restore_window_style =
-                    unsafe { GetWindowLongW(self.hwnd, GWL_STYLE) };
+                self.restore_window_style = unsafe { GetWindowLongW(self.hwnd, GWL_STYLE) };
                 self.change_resolution();
             } else {
                 self.restore_resolution();
@@ -253,9 +254,16 @@ impl View {
             } else {
                 let _ = ShowWindow(self.hwnd, SW_SHOWNORMAL);
             }
-            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-            let _ =
-                SetWindowPos(self.hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            let _ = SetWindowPos(
+                self.hwnd,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE,
+            );
         }
         if rbx::settings::GameBasicSettings::singleton().full_screen() {
             self.set_fullscreen(true);
@@ -265,7 +273,7 @@ impl View {
     /// `View::CloseWindow`.
     pub fn close_window(&self) {
         unsafe {
-            let _ = PostMessageW(Some(self.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(self.hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 

@@ -7,9 +7,9 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use crate::rbx::{self, DataModel, Game, JobAccess};
+use super::rbx::{self, DataModel, Game, JobAccess};
 
 /// Common `RBX::Verb` interface (engine base class).
 pub trait Verb {
@@ -24,19 +24,12 @@ pub trait Verb {
 
 /// `LeaveGameVerb` — closes the window, ending the process.
 pub struct LeaveGameVerb {
-    view: *mut crate::view::View,
-}
-impl LeaveGameVerb {
-    pub fn new(view: *mut crate::view::View) -> Self {
-        Self { view }
-    }
+    pub view: Arc<RwLock<super::view::View>>,
 }
 impl Verb for LeaveGameVerb {
     fn do_it(&mut self) {
         // MainLogManager::setLeaveGame()
-        if !self.view.is_null() {
-            unsafe { (*self.view).close_window() };
-        }
+        self.view.read().unwrap().close_window();
     }
 }
 
@@ -53,7 +46,10 @@ impl ScreenshotVerb {
 impl Verb for ScreenshotVerb {
     fn do_it(&mut self) {
         if let Some(dm) = self.game.get_data_model() {
-            dm.submit_task(Box::new(|| { /* DataModel::TakeScreenshotTask */ }), JobAccess::Write);
+            dm.submit_task(
+                Box::new(|| { /* DataModel::TakeScreenshotTask */ }),
+                JobAccess::Write,
+            );
         }
     }
 }
@@ -65,7 +61,10 @@ pub struct RecordToggleVerb {
 }
 impl RecordToggleVerb {
     pub fn new(game: Arc<dyn Game>) -> Self {
-        Self { game, recording: false }
+        Self {
+            game,
+            recording: false,
+        }
     }
     pub fn start_action(&mut self) {
         // videoControl->startRecording(soundService); videoRecordingSignal(true)
@@ -95,24 +94,16 @@ impl Verb for RecordToggleVerb {
 
 /// `ToggleFullscreenVerb`.
 pub struct ToggleFullscreenVerb {
-    view: *mut crate::view::View,
-}
-impl ToggleFullscreenVerb {
-    pub fn new(view: *mut crate::view::View) -> Self {
-        Self { view }
-    }
+    pub view: Arc<RwLock<super::view::View>>,
 }
 impl Verb for ToggleFullscreenVerb {
     fn do_it(&mut self) {
-        if !self.view.is_null() {
-            unsafe {
-                let v = &mut *self.view;
-                v.set_fullscreen(!v.is_fullscreen());
-            }
-        }
+        let mut v = self.view.write().unwrap();
+        let is_fullscreen = v.is_fullscreen();
+        v.set_fullscreen(!is_fullscreen);
     }
     fn is_checked(&self) -> bool {
-        !self.view.is_null() && unsafe { (*self.view).is_fullscreen() }
+        !self.view.read().unwrap().is_fullscreen()
     }
 }
 
