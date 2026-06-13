@@ -17,11 +17,7 @@
 
 use std::sync::Arc;
 
-pub mod analytics;
-pub mod http;
 pub mod settings;
-
-pub use http::{HttpFuture, HttpPostData};
 
 /// `RBX::SharedLauncher::LaunchMode`
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +85,7 @@ pub trait UserInputService: Send + Sync {
 }
 
 /// `RBX::SecurePlayerGame::SecurePlayerGame(...)` — construct the player game.
-pub fn create_secure_player_game(base_url: &str) -> Arc<dyn Game> {
+pub fn create_player_game(base_url: &str) -> Arc<dyn Game> {
     todo!("RBX::SecurePlayerGame — defined in the engine, not in WindowsClient")
 }
 

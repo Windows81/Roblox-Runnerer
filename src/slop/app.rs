@@ -27,6 +27,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Graphics::Gdi::HMONITOR;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCSTR;
@@ -67,7 +68,7 @@ pub struct Args {
 
 /// `RBX::Application`.
 pub struct Application {
-    main_window: HWND,
+    main_window: usize,
     launch_mode: LaunchMode,
     args: Args,
     module_filename: String,
@@ -76,23 +77,23 @@ pub struct Application {
     hide_chat: bool,
     crash_report_enabled: bool,
 
-    current_document: Option<Document>,
+    current_document: Option<Arc<RwLock<Document>>>,
     main_view: Option<Arc<RwLock<View>>>,
 
-    marshaller: *mut FunctionMarshaller,
+    marshaller: Option<Arc<RwLock<FunctionMarshaller>>>,
 
     toggle_fullscreen_verb: Option<ToggleFullscreenVerb>,
     leave_game_verb: Option<LeaveGameVerb>,
     record_toggle_verb: Option<RecordToggleVerb>,
     screenshot_verb: Option<ScreenshotVerb>,
 
-    entered_shutdown: std::sync::atomic::AtomicI32,
+    entered_shutdown: i32,
 }
 
 impl Application {
     pub fn new() -> Self {
         Self {
-            main_window: HWND::default(),
+            main_window: Default::default(),
             launch_mode: LaunchMode::Play,
             args: Args::default(),
             module_filename: String::new(),
@@ -102,12 +103,12 @@ impl Application {
             crash_report_enabled: true,
             current_document: None,
             main_view: None,
-            marshaller: std::ptr::null_mut(),
+            marshaller: None,
             toggle_fullscreen_verb: None,
             leave_game_verb: None,
             record_toggle_verb: None,
             screenshot_verb: None,
-            entered_shutdown: std::sync::atomic::AtomicI32::new(0),
+            entered_shutdown: 0,
         }
     }
 
@@ -120,10 +121,6 @@ impl Application {
         let args = match parse_program_options(cmd_line) {
             Ok(a) => a,
             Err(e) => {
-                rbx::analytics::report_event(
-                    rbx::analytics::EventType::Error,
-                    &format!("Command-line args error: {e}"),
-                );
                 return false;
             }
         };
@@ -164,7 +161,7 @@ impl Application {
     }
 
     /// `Application::LoadAppSettings` — parse `AppSettings.xml`.
-    pub fn load_app_settings(&mut self, _hinstance: isize) -> bool {
+    pub fn load_app_settings(&mut self, _hinstance: usize) -> bool {
         // GetModuleFileNameW → moduleFilename; SetCurrentDirectory; parse
         // <BaseUrl>/<SilentCrashReport>/<ContentFolder>/<HideChatWindow>.
         // Registry CrashReport / SilentCrashReport overrides.
@@ -173,17 +170,13 @@ impl Application {
     }
 
     /// `Application::Initialize` — anti-cheat/VMP/signature blocks removed.
-    pub fn initialize(&mut self, hwnd: HWND, _hinstance: isize) -> Result<bool, InitError> {
+    pub fn initialize(&mut self, hwnd: usize, _hinstance: usize) -> Result<bool, InitError> {
         self.main_window = hwnd;
-
-        // Analytics reporter/location/version (CVersionInfo + GetUserGeoID).
-        rbx::analytics::set_reporter("PC Player");
 
         self.initialize_logger();
         rbx::game_global_init(false);
 
         // Auth + join-script fetch (parallel). Stored as HttpFutures.
-        let mut authentication_result = rbx::HttpFuture::default();
         let mut authentication_url = String::new();
         let mut authentication_ticket = String::new();
         let mut script_url = String::new();
@@ -212,28 +205,6 @@ impl Application {
             }
         }
 
-        if !authentication_result.valid() {
-            authentication_result =
-                self.renew_login_async(&authentication_url, &authentication_ticket);
-        }
-        let join_script_result = if !script_is_place_launcher {
-            fetch_join_script_async(&script_url)
-        } else {
-            rbx::HttpFuture::default()
-        };
-
-        // [removed] DataModel::hash = CollectMd5Hash(moduleFilename)
-        // [removed] bool cheatEngine = vmProtectedDetectCheatEngineIcon()
-        // [removed] bool sandboxie = RBX::isSandboxie()
-        // [removed] ProgramMemoryChecker initial hash (pmcHash / nonce)
-        // [removed] protectVmpSections()
-
-        // Keep: enable DEP (ordinary OS hardening, not cheat detection).
-        enable_dep();
-
-        // [removed] FLog::ResetSynchronizedVariablesState gating on cheat flags
-        rbx::http::Http::set_use_statistics(true);
-
         // GlobalAdvanced/Basic settings load (engine).
         rbx::settings::GlobalSettings::advanced().load_state("");
         rbx::settings::GlobalSettings::basic().load_state(&self.global_basic_settings_path);
@@ -241,31 +212,10 @@ impl Application {
         // [removed] hookApi(); vehHookLocation/Stub; setupCeLogWatcher()
 
         self.initialize_crash_reporter();
-
-        // [removed] StandardOut "Cheat engine ... detected"
-        // [removed] DataModel::sendStats |= HATE_CHEATENGINE_OLD * cheatEngine
-        // [removed] DataModel::sendStats |= HATE_INVALID_ENVIRONMENT * sandboxie
-        // [removed] setWindowFrame() — Authenticode VerifyCryptSignature
         self.upload_crash_data(false);
-        self.share_hwnd(hwnd);
+        //self.start_new_game(hwnd, false);
 
-        // Single-instance guard, profanity filter, profiler, task scheduler,
-        // analytics lottery, machine-config post — all engine plumbing.
-
-        if !script_is_place_launcher {
-            self.start_new_game(hwnd, join_script_result, false);
-            authentication_result.wait();
-        } else {
-            self.initialize_new_game(hwnd);
-            if let Some(doc) = &self.current_document {
-                doc.set_ui_message("Requesting Server...");
-            }
-            authentication_result.wait();
-            // launchPlaceThread → LaunchPlaceThreadImpl(scriptUrl)
-            self.launch_place_thread_impl(&script_url);
-        }
-
-        self.marshaller = FunctionMarshaller::get_window();
+        self.marshaller = Some(RwLock::new(FunctionMarshaller::new()).into());
 
         // doMachineIdCheck thread (engine MachineIdUploader). [removed banned-machine UI? no — kept: not anti-cheat, it's account ban]
 
@@ -279,10 +229,6 @@ impl Application {
     fn initialize_crash_reporter(&self) {}
     fn upload_crash_data(&self, _user_requested: bool) {}
 
-    fn share_hwnd(&self, _hwnd: HWND) {
-        // CreateFileMapping("RBXMAINWND-...") + MapViewOfFile + CopyMemory(hWnd).
-    }
-
     /// `Application::requestPlaceInfo(int placeId, ...)`.
     fn request_place_info_by_id(
         &self,
@@ -291,21 +237,7 @@ impl Application {
         ticket: &mut String,
         script_url: &mut String,
     ) -> bool {
-        let url = format!(
-            "{}Game/PlaceLauncher.ashx?request=RequestGame&placeId={place_id}&isPartyLeader=false&gender=&isTeleport=true",
-            rbx::base_url()
-        );
-        let mut retries = 5i32; // FInt::RequestPlaceInfoRetryCount
-        while retries >= 0 {
-            if self.request_place_info_url(&url, auth_url, ticket, script_url)
-                == RequestPlaceInfoResult::Success
-            {
-                return true;
-            }
-            retries -= 1;
-            std::thread::sleep(std::time::Duration::from_millis(2000));
-        }
-        false
+        true
     }
 
     /// `Application::requestPlaceInfo(url, ...)` — parse the JSON status.
@@ -327,27 +259,11 @@ impl Application {
         // Document::Start on the DataModel write job. (engine threads)
     }
 
-    fn renew_login_async(&self, _auth_url: &str, _ticket: &str) -> rbx::HttpFuture {
-        // AuthenticationMarshallar(host).AuthenticateAsync(url, ticket)
-        rbx::HttpFuture::default()
-    }
-
-    fn login_async(&self, user: &str, password: &str) -> rbx::HttpFuture {
-        let login_url = format!("{}login/v1", rbx::base_url())
-            .replace("http", "https")
-            .replace("www", "api");
-        let post = format!("{{\"username\":\"{user}\", \"password\":\"{password}\"}}");
-        rbx::http::post_async(
-            &login_url,
-            rbx::HttpPostData::new(post, rbx::http::CONTENT_TYPE_APPLICATION_JSON, false),
-        )
-    }
-
     /// `Application::HandleWindowsMessage`.
     pub fn handle_windows_message(&mut self, msg: u32, wparam: WPARAM, lparam: LPARAM) {
         let Some(view) = &self.main_view else {
             unsafe {
-                DefWindowProcW(self.main_window, msg, wparam, lparam);
+                DefWindowProcW(HWND(self.main_window as _), msg, wparam, lparam);
             };
             return;
         };
@@ -365,13 +281,40 @@ impl Application {
     }
 
     /// `Application::InitializeNewGame`.
-    fn initialize_new_game(&mut self, hwnd: HWND) {
-        let mut doc = Document::new();
+    fn initialize_new_game(&mut self, hwnd: usize) {
+        let mut doc = Document {
+            marshaller: None,
+            game: None,
+            started_handlers: Vec::new(),
+        };
         doc.initialize(hwnd, !self.hide_chat);
-        let game = doc.game().expect("game");
-        self.current_document = Some(doc);
+        let game = doc.game.clone().unwrap();
+        self.current_document = Some(RwLock::new(doc).into());
 
-        let mut view = View::new(hwnd);
+        let mut view = {
+            let mut view = View {
+                hwnd: hwnd,
+                game: None,
+                fullscreen: false,
+                desire_fullscreen: rbx::settings::GameBasicSettings::singleton().full_screen(),
+                changed_resolution: false,
+                changing_resolution: false,
+                hmonitor: 0,
+                marshaller: self.marshaller.as_ref().unwrap().clone(),
+                non_fullscreen_placement: WINDOWPLACEMENT {
+                    length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                    ..Default::default()
+                },
+                restore_window_style: 0,
+                user_input: None,
+                render_job: None,
+                window_settings_valid: false,
+                window_settings_rect: (0.0, 0.0, 0.0, 0.0),
+                window_settings_maximized: false,
+            };
+            view.initialize_view();
+            view
+        };
         view.start(game.clone());
         self.main_view = Some(RwLock::new(view).into());
 
@@ -380,13 +323,41 @@ impl Application {
     }
 
     /// `Application::StartNewGame`.
-    fn start_new_game(&mut self, hwnd: HWND, script_result: rbx::HttpFuture, is_teleport: bool) {
-        let mut doc = Document::new();
+    fn start_new_game(&mut self, hwnd: usize, is_teleport: bool) {
+        let mut doc = Document {
+            marshaller: None,
+            game: None,
+            started_handlers: Vec::new(),
+        };
         doc.initialize(hwnd, !self.hide_chat);
-        let game = doc.game().expect("game");
+        let game = doc.game.clone().unwrap();
+        self.current_document = Some(RwLock::new(doc).into());
 
         if !is_teleport {
-            let view = View::new(hwnd);
+            let view = {
+                let mut view = View {
+                    hwnd: hwnd,
+                    game: None,
+                    fullscreen: false,
+                    desire_fullscreen: rbx::settings::GameBasicSettings::singleton().full_screen(),
+                    changed_resolution: false,
+                    changing_resolution: false,
+                    hmonitor: 0,
+                    marshaller: self.marshaller.as_ref().unwrap().clone(),
+                    non_fullscreen_placement: WINDOWPLACEMENT {
+                        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                        ..Default::default()
+                    },
+                    restore_window_style: 0,
+                    user_input: None,
+                    render_job: None,
+                    window_settings_valid: false,
+                    window_settings_rect: (0.0, 0.0, 0.0, 0.0),
+                    window_settings_maximized: false,
+                };
+                view.initialize_view();
+                view
+            };
             self.main_view = Some(RwLock::new(view).into());
         }
 
@@ -394,12 +365,8 @@ impl Application {
             view.write().unwrap().start(game.clone());
         }
 
-        let launch_mode = self.launch_mode;
         let vr = self.vr_device_name();
-        self.current_document = Some(doc);
-        if let Some(game) = self.current_document.as_ref().and_then(|d| d.game()) {
-            self.connect_gui_service(&game);
-        }
+        self.connect_gui_service(&game);
         self.init_verbs();
     }
 
@@ -413,18 +380,18 @@ impl Application {
     }
 
     fn init_verbs(&mut self) {
+        let binding = self.current_document.as_ref().unwrap().read().unwrap();
+        let game = binding.game.as_ref().unwrap();
+
         let view_ptr = self.main_view.clone().unwrap();
-        let game = self.current_document.as_ref().and_then(|d| d.game());
-        if let Some(game) = game {
-            self.leave_game_verb = Some(LeaveGameVerb {
-                view: view_ptr.clone(),
-            });
-            self.record_toggle_verb = Some(RecordToggleVerb::new(game.clone()));
-            self.screenshot_verb = Some(ScreenshotVerb::new(game.clone()));
-            self.toggle_fullscreen_verb = Some(ToggleFullscreenVerb {
-                view: view_ptr.clone(),
-            });
-        }
+        self.leave_game_verb = Some(LeaveGameVerb {
+            view: view_ptr.clone(),
+        });
+        self.record_toggle_verb = Some(RecordToggleVerb::new(game.clone()));
+        self.screenshot_verb = Some(ScreenshotVerb::new(game.clone()));
+        self.toggle_fullscreen_verb = Some(ToggleFullscreenVerb {
+            view: view_ptr.clone(),
+        });
     }
 
     fn shutdown_verbs(&mut self) {
@@ -437,21 +404,18 @@ impl Application {
     /// `Application::Teleport`.
     pub fn teleport(&mut self, auth_url: &str, ticket: &str, script_url: &str) {
         if let Some(doc) = &self.current_document {
-            doc.prepare_shutdown();
+            doc.write().unwrap().prepare_shutdown();
         }
         if let Some(view) = &self.main_view {
             view.write().unwrap().stop();
         }
         self.shutdown_verbs();
-        if let Some(mut doc) = self.current_document.take() {
-            doc.shutdown();
+        if let Some(doc) = self.current_document.take() {
+            doc.write().unwrap().shutdown();
         }
 
-        let authentication_result = self.renew_login_async(auth_url, ticket);
-        let join_script_result = fetch_join_script_async(script_url);
         let hwnd = self.main_window;
-        self.start_new_game(hwnd, join_script_result, true);
-        authentication_result.wait();
+        self.start_new_game(hwnd, true);
     }
 
     /// `Application::UploadSessionLogs`.
@@ -471,16 +435,12 @@ impl Application {
 
     /// `Application::AboutToShutdown`.
     pub fn about_to_shutdown(&mut self) {
-        self.entered_shutdown
-            .compare_exchange(
-                0,
-                1,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            )
-            .ok();
+        if self.entered_shutdown != 0 {
+            return;
+        }
+        self.entered_shutdown = 1;
         if let Some(doc) = &self.current_document {
-            doc.prepare_shutdown();
+            doc.write().unwrap().prepare_shutdown();
         }
         if let Some(view) = &self.main_view {
             view.clone().write().unwrap().about_to_shutdown();
@@ -494,14 +454,10 @@ impl Application {
             view.write().unwrap().stop();
         }
         if let Some(mut doc) = self.current_document.take() {
-            doc.shutdown();
+            doc.write().unwrap().shutdown();
         }
         rbx::settings::GlobalSettings::basic().save_state();
         rbx::game_global_exit();
-        if !self.marshaller.is_null() {
-            FunctionMarshaller::release_window(self.marshaller);
-            self.marshaller = std::ptr::null_mut();
-        }
     }
 
     fn vr_device_name(&self) -> Option<String> {
@@ -518,27 +474,6 @@ impl std::fmt::Display for InitError {
     }
 }
 impl std::error::Error for InitError {}
-
-/// `fetchJoinScriptAsync` — only fetch trusted URLs (silent empty otherwise).
-fn fetch_join_script_async(url: &str) -> rbx::HttpFuture {
-    if rbx::content_is_url(url) && rbx::network_is_trusted_content(url) {
-        rbx::http::get_with_retries(url, 5)
-    } else {
-        rbx::http::ready_empty_future()
-    }
-}
-
-/// `SetProcessDEPPolicy(1)` — kept as OS hardening.
-fn enable_dep() {
-    unsafe {
-        if let Ok(kernel32) = GetModuleHandleA(PCSTR(b"Kernel32\0".as_ptr())) {
-            if let Some(pfn) = GetProcAddress(kernel32, PCSTR(b"SetProcessDEPPolicy\0".as_ptr())) {
-                let set_dep: unsafe extern "system" fn(u32) -> i32 = std::mem::transmute(pfn);
-                set_dep(1);
-            }
-        }
-    }
-}
 
 /// `boost::program_options` parsing of `_tWinMain`'s command line.
 fn parse_program_options(cmd_line: &str) -> Result<Args, String> {

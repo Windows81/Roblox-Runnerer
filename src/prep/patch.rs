@@ -12,7 +12,7 @@ pub fn patch_dll(
     dir_path: &Path,
     exe_name: &str,
     dll_name: &str,
-) -> Result<u32, Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error>> {
     let read_path = dir_path.join(exe_name);
     let write_path = dir_path.join(dll_name);
 
@@ -116,5 +116,5 @@ pub fn patch_dll(
     let new_charactertics = characteristics | 0x2000; // Sets IMAGE_FILE_DLL bit to 1.
     write_file.seek(SeekFrom::Start(file_header_offset + 0x16))?;
     write_file.write_all(&new_charactertics.to_le_bytes())?;
-    Ok(entry_point_rva)
+    Ok(entry_point_rva as _)
 }

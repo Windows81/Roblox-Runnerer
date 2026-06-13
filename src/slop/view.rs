@@ -22,10 +22,11 @@ impl Default for OSContext {
     }
 }
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, Weak};
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::w;
 
@@ -47,65 +48,30 @@ pub enum GraphicsMode {
 
 /// `RBX::View`.
 pub struct View {
-    hwnd: HWND,
-    game: Option<Arc<dyn Game>>,
-    fullscreen: bool,
-    desire_fullscreen: bool,
-    changed_resolution: bool,
-    changing_resolution: bool,
-    hmonitor: HMONITOR,
-    marshaller: *mut FunctionMarshaller,
-    non_fullscreen_placement: WINDOWPLACEMENT,
-    restore_window_style: i32,
-    user_input: Option<Box<UserInput>>,
-    render_job: Option<Arc<RenderJob>>,
-    window_settings_valid: bool,
-    window_settings_rect: (f32, f32, f32, f32),
-    window_settings_maximized: bool,
+    pub hwnd: usize,
+    pub game: Option<Arc<dyn Game>>,
+    pub fullscreen: bool,
+    pub desire_fullscreen: bool,
+    pub changed_resolution: bool,
+    pub changing_resolution: bool,
+    pub hmonitor: usize,
+    pub marshaller: Arc<RwLock<FunctionMarshaller>>,
+    pub non_fullscreen_placement: WINDOWPLACEMENT,
+    pub restore_window_style: i32,
+    pub user_input: Option<Box<UserInput>>,
+    pub render_job: Option<Arc<RenderJob>>,
+    pub window_settings_valid: bool,
+    pub window_settings_rect: (f32, f32, f32, f32),
+    pub window_settings_maximized: bool,
 }
 
 impl View {
-    /// `View::View(HWND)`.
-    pub fn new(hwnd: HWND) -> Self {
-        let marshaller = FunctionMarshaller::get_window();
-        let mut view = Self {
-            hwnd,
-            game: None,
-            fullscreen: false,
-            desire_fullscreen: rbx::settings::GameBasicSettings::singleton().full_screen(),
-            changed_resolution: false,
-            changing_resolution: false,
-            hmonitor: HMONITOR::default(),
-            marshaller,
-            non_fullscreen_placement: WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            },
-            restore_window_style: 0,
-            user_input: None,
-            render_job: None,
-            window_settings_valid: false,
-            window_settings_rect: (0.0, 0.0, 0.0, 0.0),
-            window_settings_maximized: false,
-        };
-        view.initialize_view();
-        view
-    }
-
-    pub fn hwnd(&self) -> HWND {
-        self.hwnd
-    }
-
-    pub fn is_fullscreen(&self) -> bool {
-        self.fullscreen
-    }
-
     pub fn get_data_model(&self) -> Option<Arc<dyn DataModel>> {
         self.game.as_ref().and_then(|g| g.get_data_model())
     }
 
     /// `View::initializeView` — pick a graphics mode and create the GfxBase view.
-    fn initialize_view(&mut self) {
+    pub fn initialize_view(&mut self) {
         // ViewBase::InitPluginModules();
         // Original prefers OpenGL unless FFlag::DirectXEnable; here we simply
         // record the latched mode. The actual ViewBase::CreateView lives in
@@ -114,7 +80,7 @@ impl View {
         self.initialize_sizes();
     }
 
-    fn initialize_sizes(&mut self) {
+    pub fn initialize_sizes(&mut self) {
         // CRenderSettingsItem window/fullscreen size validation (engine).
     }
 
@@ -137,20 +103,27 @@ impl View {
     fn unbind_workspace(&mut self) {}
 
     fn initialize_jobs(&mut self) {
-        if let (Some(game), false) = (self.game.clone(), self.marshaller.is_null()) {
-            if let Some(dm) = game.get_data_model() {
-                self.render_job = Some(Arc::new(RenderJob::new(
-                    self as *mut _,
-                    self.marshaller,
-                    dm,
-                )));
+        let Some(game) = self.game.clone() else {
+            return;
+        };
+        let Some(dm) = game.get_data_model() else {
+            return;
+        };
+        let marshaller = self.marshaller.clone();
+        self.render_job = Some(
+            RenderJob {
+                marshaller: marshaller,
+                stopped: false,
+                is_awake: true,
+                data_model: Arc::downgrade(&dm),
             }
-        }
+            .into(),
+        );
     }
 
     fn initialize_input(&mut self) {
         if let Some(game) = self.game.clone() {
-            self.user_input = Some(Box::new(UserInput::new(self.hwnd, game, self as *mut _)));
+            self.user_input = Some(Box::new(UserInput::new(self.hwnd, game)));
             // ControllerService::setHardwareDevice(userInput) (engine)
         }
     }
@@ -161,9 +134,7 @@ impl View {
 
     fn remove_jobs(&mut self) {
         // TaskScheduler::removeBlocking(renderJob, ProcessMessages); marshaller->ProcessMessages();
-        if !self.marshaller.is_null() {
-            unsafe { (*self.marshaller).process_messages() };
-        }
+        self.marshaller.write().unwrap().process_messages();
         self.render_job = None;
     }
 
@@ -178,14 +149,22 @@ impl View {
             {
                 self.change_resolution();
                 unsafe {
-                    let _ = ShowWindow(self.hwnd, SW_RESTORE);
-                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(self.hwnd);
-                    let _ = SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    let _ = ShowWindow(HWND(self.hwnd as _), SW_RESTORE);
+                    let _ = SetFocus(HWND(self.hwnd as _));
+                    let _ = SetWindowPos(
+                        HWND(self.hwnd as _),
+                        HWND_TOP,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE,
+                    );
                 }
             } else if self.fullscreen && !self.changing_resolution && activating == WA_INACTIVE {
                 unsafe {
                     SetWindowLongPtrW(
-                        self.hwnd,
+                        HWND(self.hwnd as _),
                         GWL_STYLE,
                         (WS_VISIBLE
                             | WS_POPUP
@@ -195,7 +174,15 @@ impl View {
                             | WS_CLIPCHILDREN)
                             .0 as isize,
                     );
-                    let _ = SetWindowPos(self.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                    let _ = SetWindowPos(
+                        HWND(self.hwnd as _),
+                        HWND_TOP,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE,
+                    );
                 }
             }
         } else if let Some(ui) = self.user_input.as_mut() {
@@ -212,7 +199,8 @@ impl View {
     pub fn set_fullscreen(&mut self, value: bool) {
         if self.fullscreen != value {
             if value {
-                self.restore_window_style = unsafe { GetWindowLongW(self.hwnd, GWL_STYLE) };
+                self.restore_window_style =
+                    unsafe { GetWindowLongW(HWND(self.hwnd as _), GWL_STYLE) };
                 self.change_resolution();
             } else {
                 self.restore_resolution();
@@ -229,11 +217,13 @@ impl View {
                 ..Default::default()
             };
             unsafe {
-                let _ = GetWindowPlacement(self.hwnd, &mut self.non_fullscreen_placement);
+                let _ =
+                    GetWindowPlacement(HWND(self.hwnd as _), &mut self.non_fullscreen_placement);
             }
         }
         self.fullscreen = true;
-        self.hmonitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST) };
+        self.hmonitor =
+            unsafe { MonitorFromWindow(HWND(self.hwnd as _), MONITOR_DEFAULTTONEAREST) }.0 as _;
         self.initialize_sizes();
         // Best-mode match + ChangeDisplaySettingsEx + modifyWindow(WS_POPUP...) (Win32).
     }
@@ -242,7 +232,7 @@ impl View {
         self.fullscreen = false;
         // ChangeDisplaySettingsEx(NULL) restore + SetWindowPlacement (Win32).
         unsafe {
-            let _ = SetWindowPlacement(self.hwnd, &self.non_fullscreen_placement);
+            let _ = SetWindowPlacement(HWND(self.hwnd as _), &self.non_fullscreen_placement);
         }
     }
 
@@ -250,13 +240,21 @@ impl View {
     pub fn show_window(&mut self) {
         unsafe {
             if rbx::settings::GameBasicSettings::singleton().start_maximized() {
-                let _ = ShowWindow(self.hwnd, SW_SHOWMAXIMIZED);
+                let _ = ShowWindow(HWND(self.hwnd as _), SW_SHOWMAXIMIZED);
             } else {
-                let _ = ShowWindow(self.hwnd, SW_SHOWNORMAL);
+                let _ = ShowWindow(HWND(self.hwnd as _), SW_SHOWNORMAL);
             }
-            let _ = SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             let _ = SetWindowPos(
-                self.hwnd,
+                HWND(self.hwnd as _),
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE,
+            );
+            let _ = SetWindowPos(
+                HWND(self.hwnd as _),
                 HWND_NOTOPMOST,
                 0,
                 0,
@@ -273,7 +271,7 @@ impl View {
     /// `View::CloseWindow`.
     pub fn close_window(&self) {
         unsafe {
-            let _ = PostMessageW(self.hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(HWND(self.hwnd as _), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 
@@ -288,7 +286,7 @@ impl View {
             ..Default::default()
         };
         let found = if !self.fullscreen {
-            unsafe { GetWindowPlacement(self.hwnd, &mut placement).is_ok() }
+            unsafe { GetWindowPlacement(HWND(self.hwnd as _), &mut placement).is_ok() }
         } else {
             placement = self.non_fullscreen_placement;
             true
@@ -296,7 +294,7 @@ impl View {
         if found {
             let mut rect = RECT::default();
             unsafe {
-                let _ = GetWindowRect(self.hwnd, &mut rect);
+                let _ = GetWindowRect(HWND(self.hwnd as _), &mut rect);
             }
             // Taskbar adjustment (Shell_traywnd) omitted for brevity; same math.
             self.window_settings_valid = true;
@@ -321,14 +319,6 @@ impl View {
         self.unbind_workspace();
         self.save_window_settings();
         self.game = None;
-    }
-}
-
-impl Drop for View {
-    fn drop(&mut self) {
-        if !self.marshaller.is_null() {
-            FunctionMarshaller::release_window(self.marshaller);
-        }
     }
 }
 

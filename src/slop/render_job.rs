@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, RwLock, Weak};
 
 use super::function_marshaller::FunctionMarshaller;
 use super::rbx::{DataModel, JobAccess};
@@ -26,38 +26,23 @@ pub enum StepResult {
 
 /// `RBX::RenderJob : public BaseRenderJob, public IMetric`.
 pub struct RenderJob {
-    marshaller: *mut FunctionMarshaller,
-    roblox_view: *mut super::view::View,
-    stopped: AtomicBool,
-    is_awake: AtomicBool,
-    data_model: Weak<dyn DataModel>,
+    pub marshaller: Arc<RwLock<FunctionMarshaller>>,
+    pub stopped: bool,
+    pub is_awake: bool,
+    pub data_model: Weak<dyn DataModel>,
 }
 
 impl RenderJob {
-    pub fn new(
-        roblox_view: *mut super::view::View,
-        marshaller: *mut FunctionMarshaller,
-        data_model: Arc<dyn DataModel>,
-    ) -> Self {
-        Self {
-            marshaller,
-            roblox_view,
-            stopped: AtomicBool::new(false),
-            is_awake: AtomicBool::new(true),
-            data_model: Arc::downgrade(&data_model),
-        }
-    }
-
-    pub fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
+    pub fn stop(&mut self) {
+        self.stopped = true;
     }
 
     /// `RenderJob::stepDataModelJob` — security/cheat block removed.
-    pub fn step_data_model_job(&self) -> StepResult {
+    pub fn step_data_model_job(&mut self) -> StepResult {
         let Some(dm) = self.data_model.upgrade() else {
             return StepResult::Done;
         };
-        if self.stopped.load(Ordering::SeqCst) {
+        if self.stopped {
             return StepResult::Done;
         }
 
@@ -68,8 +53,7 @@ impl RenderJob {
 
         // Standard render path: lock the DataModel for render, step, and
         // marshal renderPrepare/renderPerform onto the view thread.
-        self.is_awake.store(false, Ordering::SeqCst);
-        let _ = (dm, self.marshaller, self.roblox_view);
+        self.is_awake = false;
         StepResult::Stepped
     }
 

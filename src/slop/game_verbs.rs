@@ -99,11 +99,11 @@ pub struct ToggleFullscreenVerb {
 impl Verb for ToggleFullscreenVerb {
     fn do_it(&mut self) {
         let mut v = self.view.write().unwrap();
-        let is_fullscreen = v.is_fullscreen();
-        v.set_fullscreen(!is_fullscreen);
+        let fullscreen = v.fullscreen;
+        v.set_fullscreen(!fullscreen);
     }
     fn is_checked(&self) -> bool {
-        !self.view.read().unwrap().is_fullscreen()
+        !self.view.read().unwrap().fullscreen
     }
 }
 

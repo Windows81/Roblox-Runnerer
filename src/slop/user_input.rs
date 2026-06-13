@@ -34,9 +34,8 @@ enum MouseButton {
 
 /// `RBX::UserInput : public UserInputBase`.
 pub struct UserInput {
-    wnd: HWND,
+    wnd: usize,
     pub game: Arc<dyn Game>,
-    parent_view: *mut super::view::View,
 
     // Mouse state
     is_mouse_captured: bool,
@@ -61,13 +60,12 @@ pub struct UserInput {
 
 impl UserInput {
     /// `UserInput::UserInput(HWND, game, View*)`.
-    pub fn new(wnd: HWND, game: Arc<dyn Game>, parent_view: *mut super::view::View) -> Self {
+    pub fn new(wnd: usize, game: Arc<dyn Game>) -> Self {
         let mouse_button_swap = read_swap_mouse_buttons();
 
         let mut this = Self {
             wnd,
             game,
-            parent_view,
             is_mouse_captured: false,
             is_mouse_inside: false,
             is_mouse_acquired: false,
@@ -139,7 +137,7 @@ impl UserInput {
             y: pos.1 as i32,
         };
         unsafe {
-            let _ = ClientToScreen(self.wnd, &mut p);
+            let _ = ClientToScreen(HWND(self.wnd as _), &mut p);
             let _ = SetCursorPos(p.x, p.y);
         }
         self.is_mouse_acquired = false;
@@ -192,7 +190,7 @@ impl UserInput {
         let mut tme = TRACKMOUSEEVENT {
             cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
             dwFlags: TME_LEAVE,
-            hwndTrack: self.wnd,
+            hwndTrack: HWND(self.wnd as _),
             dwHoverTime: 0,
         };
         if unsafe { TrackMouseEvent(&mut tme) }.is_err() {
@@ -259,7 +257,7 @@ impl UserInput {
             };
         }
         unsafe {
-            let _ = PostMessageW(self.wnd, WM_CALL_SETFOCUS, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(HWND(self.wnd as _), WM_CALL_SETFOCUS, WPARAM(0), LPARAM(0));
         }
         match btn {
             MouseButton::Left => {
@@ -292,7 +290,8 @@ impl UserInput {
                     // Alt+F4 closes; matched accelerators post WM_COMMAND.
                     if VIRTUAL_KEY(v_key as u16) == VK_F4 {
                         unsafe {
-                            let _ = PostMessageW(self.wnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                            let _ =
+                                PostMessageW(HWND(self.wnd as _), WM_CLOSE, WPARAM(0), LPARAM(0));
                         }
                     }
                 }
@@ -366,11 +365,11 @@ mod dinput {
     }
 
     pub fn create_devices() {}
-    pub fn acquire_mouse(_wnd: HWND) -> bool {
+    pub fn acquire_mouse(_wnd: usize) -> bool {
         false
     }
     pub fn unacquire_mouse() {}
-    pub fn acquire_keyboard(_wnd: HWND) -> bool {
+    pub fn acquire_keyboard(_wnd: usize) -> bool {
         false
     }
     pub fn unacquire_keyboard() {}

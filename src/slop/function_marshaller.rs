@@ -1,15 +1,7 @@
 //! Translated from `FunctionMarshaller.h/.cpp`.
-//!
-//! A helper for marshalling closures onto a specific Windows thread, both
-//! synchronously (`Execute`, via `SendMessage`) and asynchronously (`Submit`,
-//! via a queue drained on `WM_ASYNCEVENT`). The original is an
-//! `ATL::CWindowImpl` keyed per-thread in a static map; this is an idiomatic
-//! Rust equivalent built on a hidden message-only `HWND`.
 
 #![allow(dead_code)]
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -25,53 +17,23 @@ type Job = extern "C" fn();
 
 /// One marshaller per thread, mirroring the C++ static `windows` map.
 pub struct FunctionMarshaller {
-    hwnd: HWND,
+    hwnd: usize,
     thread_id: u32,
     async_calls: Arc<Mutex<Vec<Job>>>,
     posted_async: Arc<std::sync::atomic::AtomicBool>,
     ref_count: usize,
 }
 
-thread_local! {
-    static THREAD_MARSHALLERS: RefCell<HashMap<u32, *mut FunctionMarshaller>> =
-        RefCell::new(HashMap::new());
+impl Drop for FunctionMarshaller {
+    /// `FunctionMarshaller::ReleaseWindow()`.
+    fn drop(&mut self) {
+        unsafe { DestroyWindow(HWND(self.hwnd as _)) };
+    }
 }
 
 impl FunctionMarshaller {
-    /// `FunctionMarshaller::GetWindow()` — share one instance per thread.
-    pub fn get_window() -> *mut FunctionMarshaller {
-        let tid = unsafe { GetCurrentThreadId() };
-        THREAD_MARSHALLERS.with(|m| {
-            let mut map = m.borrow_mut();
-            if let Some(&existing) = map.get(&tid) {
-                unsafe { (*existing).ref_count += 1 };
-                existing
-            } else {
-                let boxed = Box::into_raw(Box::new(Self::new(tid)));
-                map.insert(tid, boxed);
-                unsafe { (*boxed).ref_count += 1 };
-                boxed
-            }
-        })
-    }
-
-    /// `FunctionMarshaller::ReleaseWindow()`.
-    pub fn release_window(window: *mut FunctionMarshaller) {
-        let tid = unsafe { (*window).thread_id };
-        THREAD_MARSHALLERS.with(|m| {
-            let mut map = m.borrow_mut();
-            unsafe { (*window).ref_count -= 1 };
-            if unsafe { (*window).ref_count } == 0 {
-                map.remove(&tid);
-                unsafe {
-                    let _ = DestroyWindow((*window).hwnd);
-                    drop(Box::from_raw(window));
-                }
-            }
-        });
-    }
-
-    fn new(thread_id: u32) -> Self {
+    pub fn new() -> Self {
+        let thread_id = unsafe { GetCurrentThreadId() };
         let hinstance = unsafe { GetModuleHandleW(None).unwrap() };
         let async_calls: Arc<Mutex<Vec<Job>>> = Default::default();
         let posted_async: Arc<std::sync::atomic::AtomicBool> = Default::default();
@@ -80,7 +42,7 @@ impl FunctionMarshaller {
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
-                w!("Roblox.FunctionMarshaller"),
+                w!("RobloxPlayerWindow"),
                 PCWSTR::null(),
                 WS_POPUP,
                 0,
@@ -93,7 +55,8 @@ impl FunctionMarshaller {
                 None,
             )
             .expect("FunctionMarshaller window")
-        };
+        }
+        .0 as usize;
 
         Self {
             hwnd,
@@ -111,7 +74,12 @@ impl FunctionMarshaller {
         } else {
             let boxed = Box::into_raw(Box::new(Some(job)));
             unsafe {
-                SendMessageW(self.hwnd, WM_EVENT, WPARAM(0), LPARAM(boxed as isize));
+                SendMessageW(
+                    HWND(self.hwnd as _),
+                    WM_EVENT,
+                    WPARAM(0),
+                    LPARAM(boxed as isize),
+                );
             }
         }
     }
@@ -124,7 +92,7 @@ impl FunctionMarshaller {
             .swap(true, std::sync::atomic::Ordering::SeqCst)
         {
             unsafe {
-                let _ = PostMessageW(self.hwnd, WM_ASYNCEVENT, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(HWND(self.hwnd as _), WM_ASYNCEVENT, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -133,8 +101,14 @@ impl FunctionMarshaller {
     pub fn process_messages(&self) {
         let mut msg = MSG::default();
         unsafe {
-            while PeekMessageW(&mut msg, self.hwnd, WM_ASYNCEVENT, WM_ASYNCEVENT, PM_REMOVE)
-                .as_bool()
+            while PeekMessageW(
+                &mut msg,
+                HWND(self.hwnd as _),
+                WM_ASYNCEVENT,
+                WM_ASYNCEVENT,
+                PM_REMOVE,
+            )
+            .as_bool()
             {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
