@@ -24,7 +24,10 @@
 
 #![allow(dead_code)]
 
-use std::sync::{Arc, Mutex, RwLock};
+use std::ffi::CString;
+use std::mem;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::HMONITOR;
@@ -32,10 +35,11 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCSTR;
 
-use super::document::Document;
+use crate::offsets;
+use crate::structs::{DataModelInitializationParams, Game, GameLaunchIntent, LaunchMode};
+
 use super::function_marshaller::FunctionMarshaller;
 use super::game_verbs::*;
-use super::rbx::{self, LaunchMode};
 use super::view::View;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,6 +72,7 @@ pub struct Args {
 
 /// `RBX::Application`.
 pub struct Application {
+    data_model_funcs: offsets::datamodel::DataModel,
     main_window: usize,
     launch_mode: LaunchMode,
     args: Args,
@@ -75,9 +80,10 @@ pub struct Application {
     global_basic_settings_path: String,
     wait_event_name: String,
     hide_chat: bool,
+    game: Game,
     crash_report_enabled: bool,
 
-    current_document: Option<Arc<RwLock<Document>>>,
+    //current_document: Option<Arc<RwLock<Document>>>,
     main_view: Option<Arc<RwLock<View>>>,
 
     marshaller: Option<Arc<RwLock<FunctionMarshaller>>>,
@@ -91,7 +97,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub fn new() -> Self {
+    pub fn new(data_model_funcs: offsets::datamodel::DataModel) -> Self {
         Self {
             main_window: Default::default(),
             launch_mode: LaunchMode::Play,
@@ -101,7 +107,7 @@ impl Application {
             wait_event_name: String::new(),
             hide_chat: false,
             crash_report_enabled: true,
-            current_document: None,
+            //current_document: None,
             main_view: None,
             marshaller: None,
             toggle_fullscreen_verb: None,
@@ -109,6 +115,16 @@ impl Application {
             record_toggle_verb: None,
             screenshot_verb: None,
             entered_shutdown: 0,
+            game: (data_model_funcs.unsecured_studio_game)(
+                unsafe { mem::zeroed() },
+                unsafe { mem::zeroed() },
+                CString::new("https://localhost:2005").unwrap(),
+                true,
+                true,
+                GameLaunchIntent::GameLaunchIntentClient,
+                unsafe { mem::zeroed() },
+            ),
+            data_model_funcs: data_model_funcs,
         }
     }
 
@@ -144,7 +160,7 @@ impl Application {
             return false;
         }
         if let Some(c) = &args.content {
-            rbx::content_set_asset_folder(c);
+            //rbx::content_set_asset_folder(c);
         }
         if let Some(w) = &args.wait_event {
             self.wait_event_name = w.clone();
@@ -174,7 +190,6 @@ impl Application {
         self.main_window = hwnd;
 
         self.initialize_logger();
-        rbx::game_global_init(false);
 
         // Auth + join-script fetch (parallel). Stored as HttpFutures.
         let mut authentication_url = String::new();
@@ -204,10 +219,6 @@ impl Application {
                 script_is_place_launcher = true;
             }
         }
-
-        // GlobalAdvanced/Basic settings load (engine).
-        rbx::settings::GlobalSettings::advanced().load_state("");
-        rbx::settings::GlobalSettings::basic().load_state(&self.global_basic_settings_path);
 
         // [removed] hookApi(); vehHookLocation/Stub; setupCeLogWatcher()
 
@@ -282,104 +293,52 @@ impl Application {
 
     /// `Application::InitializeNewGame`.
     fn initialize_new_game(&mut self, hwnd: usize) {
-        let mut doc = Document {
-            marshaller: None,
+        let mut view = View {
+            hwnd: hwnd,
             game: None,
-            started_handlers: Vec::new(),
+            fullscreen: false,
+            desire_fullscreen: false,
+            changed_resolution: false,
+            changing_resolution: false,
+            hmonitor: 0,
+            marshaller: self.marshaller.as_ref().unwrap().clone(),
+            non_fullscreen_placement: WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            },
+            restore_window_style: 0,
+            user_input: None,
+            window_settings_valid: false,
+            window_settings_rect: (0.0, 0.0, 0.0, 0.0),
+            window_settings_maximized: false,
+            is_awake: true,
+            stopped: false,
         };
-        doc.initialize(hwnd, !self.hide_chat);
-        let game = doc.game.clone().unwrap();
-        self.current_document = Some(RwLock::new(doc).into());
-
-        let mut view = {
-            let mut view = View {
-                hwnd: hwnd,
-                game: None,
-                fullscreen: false,
-                desire_fullscreen: rbx::settings::GameBasicSettings::singleton().full_screen(),
-                changed_resolution: false,
-                changing_resolution: false,
-                hmonitor: 0,
-                marshaller: self.marshaller.as_ref().unwrap().clone(),
-                non_fullscreen_placement: WINDOWPLACEMENT {
-                    length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                    ..Default::default()
-                },
-                restore_window_style: 0,
-                user_input: None,
-                render_job: None,
-                window_settings_valid: false,
-                window_settings_rect: (0.0, 0.0, 0.0, 0.0),
-                window_settings_maximized: false,
-            };
-            view.initialize_view();
-            view
-        };
-        view.start(game.clone());
+        view.initialize_view();
+        view.start(&self.game);
         self.main_view = Some(RwLock::new(view).into());
 
-        self.connect_gui_service(&game);
         self.init_verbs();
     }
 
     /// `Application::StartNewGame`.
     fn start_new_game(&mut self, hwnd: usize, is_teleport: bool) {
-        let mut doc = Document {
-            marshaller: None,
-            game: None,
-            started_handlers: Vec::new(),
-        };
-        doc.initialize(hwnd, !self.hide_chat);
-        let game = doc.game.clone().unwrap();
-        self.current_document = Some(RwLock::new(doc).into());
-
         if !is_teleport {
-            let view = {
-                let mut view = View {
-                    hwnd: hwnd,
-                    game: None,
-                    fullscreen: false,
-                    desire_fullscreen: rbx::settings::GameBasicSettings::singleton().full_screen(),
-                    changed_resolution: false,
-                    changing_resolution: false,
-                    hmonitor: 0,
-                    marshaller: self.marshaller.as_ref().unwrap().clone(),
-                    non_fullscreen_placement: WINDOWPLACEMENT {
-                        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                        ..Default::default()
-                    },
-                    restore_window_style: 0,
-                    user_input: None,
-                    render_job: None,
-                    window_settings_valid: false,
-                    window_settings_rect: (0.0, 0.0, 0.0, 0.0),
-                    window_settings_maximized: false,
-                };
-                view.initialize_view();
-                view
-            };
-            self.main_view = Some(RwLock::new(view).into());
+            self.initialize_new_game(hwnd);
         }
 
+        /*
         if let Some(view) = &self.main_view {
             view.write().unwrap().start(game.clone());
         }
+        */
 
         let vr = self.vr_device_name();
-        self.connect_gui_service(&game);
         self.init_verbs();
     }
 
-    fn connect_gui_service(&self, game: &Arc<dyn rbx::Game>) {
-        if let Some(dm) = game.get_data_model() {
-            if let Some(gs) = dm.find_gui_service() {
-                gs.on_open_url_window(Box::new(|_url| { /* openUrlInBrowserApp */ }));
-                gs.on_url_window_closed(Box::new(|| { /* closeBrowser */ }));
-            }
-        }
-    }
-
     fn init_verbs(&mut self) {
+        /*
         let binding = self.current_document.as_ref().unwrap().read().unwrap();
         let game = binding.game.as_ref().unwrap();
 
@@ -392,6 +351,7 @@ impl Application {
         self.toggle_fullscreen_verb = Some(ToggleFullscreenVerb {
             view: view_ptr.clone(),
         });
+        */
     }
 
     fn shutdown_verbs(&mut self) {
@@ -403,16 +363,10 @@ impl Application {
 
     /// `Application::Teleport`.
     pub fn teleport(&mut self, auth_url: &str, ticket: &str, script_url: &str) {
-        if let Some(doc) = &self.current_document {
-            doc.write().unwrap().prepare_shutdown();
-        }
         if let Some(view) = &self.main_view {
             view.write().unwrap().stop();
         }
         self.shutdown_verbs();
-        if let Some(doc) = self.current_document.take() {
-            doc.write().unwrap().shutdown();
-        }
 
         let hwnd = self.main_window;
         self.start_new_game(hwnd, true);
@@ -439,12 +393,6 @@ impl Application {
             return;
         }
         self.entered_shutdown = 1;
-        if let Some(doc) = &self.current_document {
-            doc.write().unwrap().prepare_shutdown();
-        }
-        if let Some(view) = &self.main_view {
-            view.clone().write().unwrap().about_to_shutdown();
-        }
     }
 
     /// `Application::Shutdown`.
@@ -453,11 +401,11 @@ impl Application {
         if let Some(view) = self.main_view.take() {
             view.write().unwrap().stop();
         }
+        /*
         if let Some(mut doc) = self.current_document.take() {
             doc.write().unwrap().shutdown();
         }
-        rbx::settings::GlobalSettings::basic().save_state();
-        rbx::game_global_exit();
+         */
     }
 
     fn vr_device_name(&self) -> Option<String> {

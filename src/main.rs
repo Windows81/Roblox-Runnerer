@@ -1,12 +1,11 @@
-pub mod find;
+pub mod offsets;
 pub mod prep;
 pub mod slop;
 
 pub mod macros;
+pub mod structs;
 
 use std::path::Path;
-
-use windows::Win32::Foundation::HMODULE;
 
 fn main() {
     let dir_path = Path::new(r"C:\Users\USER\Projects\FilteringDisabled\Roblox\v463\Studio\");

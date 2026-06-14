@@ -9,7 +9,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use super::rbx::{self, DataModel, Game, JobAccess};
+use crate::offsets::datamodel::Game;
 
 /// Common `RBX::Verb` interface (engine base class).
 pub trait Verb {
@@ -35,32 +35,34 @@ impl Verb for LeaveGameVerb {
 
 /// `ScreenshotVerb` — request a screenshot; on completion optionally upload.
 pub struct ScreenshotVerb {
-    game: Arc<dyn Game>,
+    game: Game,
 }
 impl ScreenshotVerb {
-    pub fn new(game: Arc<dyn Game>) -> Self {
+    pub fn new(game: Game) -> Self {
         // dataModel->screenshotReadySignal.connect(screenshotFinished) (engine)
         Self { game }
     }
 }
 impl Verb for ScreenshotVerb {
     fn do_it(&mut self) {
+        /*
         if let Some(dm) = self.game.get_data_model() {
             dm.submit_task(
                 Box::new(|| { /* DataModel::TakeScreenshotTask */ }),
                 JobAccess::Write,
             );
         }
+         */
     }
 }
 
 /// `RecordToggleVerb` — toggles video recording on a worker thread.
 pub struct RecordToggleVerb {
-    game: Arc<dyn Game>,
+    game: Game,
     recording: bool,
 }
 impl RecordToggleVerb {
-    pub fn new(game: Arc<dyn Game>) -> Self {
+    pub fn new(game: Game) -> Self {
         Self {
             game,
             recording: false,
@@ -105,10 +107,4 @@ impl Verb for ToggleFullscreenVerb {
     fn is_checked(&self) -> bool {
         !self.view.read().unwrap().fullscreen
     }
-}
-
-/// Helper used by screenshot/video upload paths (`PostImageFinished`).
-pub(crate) fn post_image_finished(response: &str, ok: bool, dm: &Arc<dyn DataModel>) {
-    let _ = (response, ok, dm);
-    let _ = rbx::base_url();
 }

@@ -21,7 +21,7 @@ use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::rbx::{self, DataModel, Game, UserInputService};
+use crate::offsets::datamodel::Game;
 
 pub const WM_CALL_SETFOCUS: u32 = WM_USER + 187;
 
@@ -35,7 +35,7 @@ enum MouseButton {
 /// `RBX::UserInput : public UserInputBase`.
 pub struct UserInput {
     wnd: usize,
-    pub game: Arc<dyn Game>,
+    pub game: Game,
 
     // Mouse state
     is_mouse_captured: bool,
@@ -60,7 +60,7 @@ pub struct UserInput {
 
 impl UserInput {
     /// `UserInput::UserInput(HWND, game, View*)`.
-    pub fn new(wnd: usize, game: Arc<dyn Game>) -> Self {
+    pub fn new(wnd: usize, game: Game) -> Self {
         let mouse_button_swap = read_swap_mouse_buttons();
 
         let mut this = Self {
@@ -232,7 +232,7 @@ impl UserInput {
                 }
                 dinput::MouseEvent::Move(dx, dy) => {
                     // Apply sensitivity, accumulate sub-pixel fraction.
-                    let s = rbx::settings::GameBasicSettings::singleton().mouse_sensitivity();
+                    let s = 1f32; // rbx::settings::GameBasicSettings::singleton().mouse_sensitivity();
                     self.previous_cursor_pos_fraction.0 += dx * s;
                     self.previous_cursor_pos_fraction.1 += dy * s;
                     // doWrapMouse + onWrapMouse path (engine UserInputUtil).
@@ -297,32 +297,26 @@ impl UserInput {
                 }
             }
             // Forward key state to UserInputService + fire InputObject (engine).
+            /*
             if let Some(uis) = self.user_input_service() {
                 let _ = uis; // setKeyState(...)
             }
+             */
         }
     }
 
     fn send_mouse_event(&mut self, _ty: EventType, _pos: (f32, f32, f32), _delta: (f32, f32, f32)) {
         // Creates/updates a cached InputObject and fires it via UserInputService.
-        if let Some(_uis) = self.user_input_service() {}
+        //if let Some(_uis) = self.user_input_service() {}
     }
 
     fn send_focus_event(&self, _begin: bool) {
-        if let Some(_uis) = self.user_input_service() {}
+        //if let Some(_uis) = self.user_input_service() {}
     }
 
     fn game_cursor_position_expanded(&self) -> (f32, f32) {
         // center + expandVector2(wrapMousePosition, 10)
         self.wrap_mouse_position
-    }
-
-    fn user_input_service(&self) -> Option<Arc<dyn UserInputService>> {
-        self.data_model()?.find_user_input_service()
-    }
-
-    fn data_model(&self) -> Option<Arc<dyn DataModel>> {
-        self.game.get_data_model()
     }
 
     pub fn remove_jobs(&mut self) {}

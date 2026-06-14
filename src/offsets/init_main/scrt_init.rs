@@ -1,5 +1,6 @@
-use crate::find::util::load_calls_to_struct;
+use super::super::util::CallClass;
 
+impl CallClass for STRUCT_MAP {}
 #[derive(Debug)]
 #[repr(C)]
 pub struct STRUCT_MAP {
@@ -72,8 +73,8 @@ pub struct STRUCT_MAP {
     pub _exit: extern "C" fn(i32),
 }
 
-pub fn get(scrt_common_main_seh: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    load_calls_to_struct(scrt_common_main_seh, 0x171)
+pub fn find(scrt_common_main_seh: u64) -> (STRUCT_MAP, STRUCT_MAP) {
+    STRUCT_MAP::load_calls_to_struct(scrt_common_main_seh, 0x171)
 }
 
 // According to Studio v548

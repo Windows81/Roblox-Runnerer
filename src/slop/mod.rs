@@ -10,11 +10,9 @@
 #![allow(non_snake_case)]
 
 mod app;
-mod document;
+mod forwarder;
 mod function_marshaller;
 mod game_verbs;
-mod rbx;
-mod render_job;
 mod resource;
 mod user_input;
 mod view;
@@ -23,7 +21,7 @@ use std::cell::RefCell;
 use std::mem;
 use std::sync::{Arc, RwLock};
 
-use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -33,6 +31,8 @@ use windows::core::{PCWSTR, w};
 use resource::*;
 
 use app::Application;
+
+use crate::offsets;
 
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
@@ -89,7 +89,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-fn register_window(hinstance: windows::Win32::Foundation::HINSTANCE) -> Option<HWND> {
+fn register_window(hinstance: HINSTANCE) -> Option<HWND> {
     let wcex = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -127,14 +127,14 @@ fn register_window(hinstance: windows::Win32::Foundation::HINSTANCE) -> Option<H
     }
 }
 
-pub fn main(roblox_dll: usize) -> windows::core::Result<()> {
+pub fn main(data_model_funcs: offsets::datamodel::DataModel) -> windows::core::Result<()> {
     // This binary was compiled with SSE2; G3D::System::hasSSE2() guard omitted
     // (all supported x86-64 targets have SSE2).
     let hinstance = unsafe { GetModuleHandleW(None)? };
     let hwnd = register_window(hinstance.into()).unwrap();
 
     let mut binding = APPLICATION.write().unwrap();
-    let application = binding.get_or_insert(Application::new());
+    let application = binding.get_or_insert(Application::new(data_model_funcs));
 
     if !application.load_app_settings(hinstance.0 as usize) {
         return Ok(());

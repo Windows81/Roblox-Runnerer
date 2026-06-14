@@ -13,7 +13,7 @@ use windows::{
     core::HSTRING,
 };
 
-/// Constructs a QString on the stack and calls fromAscii.
+/// Constructs a QString on the stack and calls `fromAscii`.
 /// Returns a pointer to the stack-allocated buffer.
 fn construct_qstring(qt5core: HMODULE, ptr: *mut *mut u8, data: &str) -> *mut *mut u8 {
     let from_ascii = getproc_offset_func!(
@@ -28,8 +28,7 @@ fn construct_qstring(qt5core: HMODULE, ptr: *mut *mut u8, data: &str) -> *mut *m
     from_ascii(ptr, c_data.as_ptr(), data.len() as i32)
 }
 
-/// Destructs the QString internal state but DOES NOT free the object memory itself
-/// because we allocated it on the stack.
+/// Destructs the QString internal state but DOES NOT free the object memory itself because we allocated it on the stack.
 unsafe fn destruct_qstring_no_free(qt5core: HMODULE, object: *mut *mut u8) -> *mut u8 {
     if unsafe { *object }.is_null() {
         return std::ptr::null_mut();
@@ -67,8 +66,8 @@ fn test_qstring(internal_data_ptr: &*mut u8) {
     }
 }
 
-/// Mimics change_qapplicationdir using stack-allocated QString
-fn change_qapplication_dir(qt5core: HMODULE, dll_path_str: &Path) {
+/// Mimics `change_qapplicationdir`` using stack-allocated QString.
+fn change_qapplication_dir(qt5core: HMODULE, rōblox_pe_path: &Path) {
     let set_application_file_path = getproc_offset_func!(
         qt5core,
         windows::core::s!("?setApplicationFilePath@QCoreApplicationPrivate@@SAXAEBVQString@@@Z"),
@@ -80,20 +79,20 @@ fn change_qapplication_dir(qt5core: HMODULE, dll_path_str: &Path) {
     construct_qstring(
         qt5core,
         &mut *internal_data_ptr,
-        dll_path_str.to_str().unwrap(),
+        rōblox_pe_path.to_str().unwrap(),
     );
     test_qstring(&*internal_data_ptr);
     set_application_file_path(&*internal_data_ptr);
 }
 
-pub fn load(dir_path: &Path, dll_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn prepare(dir_path: &Path, rōblox_pe_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let flags = LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
         | LOAD_LIBRARY_SEARCH_SYSTEM32
         | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
         | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
         | LOAD_LIBRARY_SEARCH_USER_DIRS;
 
-    let dll_path = dir_path.join(dll_name);
+    let rōblox_pe_path = dir_path.join(rōblox_pe_name);
     let qt5core_path = dir_path.join("Qt5Core.dll");
 
     // Loads Qt5Core.dll (handle is dropped soon, as it's not actively used in main).
@@ -105,6 +104,6 @@ pub fn load(dir_path: &Path, dll_name: &str) -> Result<(), Box<dyn std::error::E
         )
     }?;
 
-    change_qapplication_dir(qt5core, &dll_path);
+    change_qapplication_dir(qt5core, &rōblox_pe_path);
     Ok(())
 }

@@ -1,5 +1,6 @@
-use crate::find::util::load_calls_to_struct;
+use super::super::util::CallClass;
 
+impl CallClass for STRUCT_MAP {}
 #[derive(Debug)]
 #[repr(C)]
 pub struct STRUCT_MAP {
@@ -28,8 +29,8 @@ pub struct STRUCT_MAP {
     pub op_delete_array_1: extern "C" fn(*const u8, usize),
 }
 
-pub fn get(win_main_addr: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    load_calls_to_struct(win_main_addr, 0x19A)
+pub fn find(win_main_addr: u64) -> (STRUCT_MAP, STRUCT_MAP) {
+    STRUCT_MAP::load_calls_to_struct(win_main_addr, 0x19A)
 }
 
 // According to Studio v548
