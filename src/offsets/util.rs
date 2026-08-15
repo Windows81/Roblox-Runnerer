@@ -20,21 +20,22 @@ pub trait CallClass: Sized {
     fn call<T: Fn() -> ()>(&self, module_address: usize, call: T) -> T {
         unsafe { transmute_copy(&(transmute_copy::<T, usize>(&call) + module_address)) }
     }
-    fn new(data: &[usize; MAX_ITEM_SIZE]) -> Self {
+    unsafe fn new(data: &[usize; MAX_ITEM_SIZE]) -> Self {
         unsafe { transmute_copy(data) }
     }
-    fn new_offset(data: &[usize; MAX_ITEM_SIZE], offset: isize) -> Self {
+    unsafe fn new_offset(data: &[usize; MAX_ITEM_SIZE], offset: isize) -> Self {
         unsafe { transmute_copy(&data.map(|v| v.strict_add_signed(offset))) }
     }
-    fn with_offset(&self, offset: isize) -> Self {
-        Self::new_offset(unsafe { transmute_copy(self) }, offset)
+    unsafe fn with_offset(&self, offset: isize) -> Self {
+        unsafe { Self::new_offset(transmute_copy(self), offset) }
     }
 
     /// This function returns two casted C-style structs.
     /// Type T is a struct whose fields' types is entirely with *extern* function pointers.
     /// The first result has the *destination* addresses.
     /// The second result has the *caller* instructions' addresses; values there **must** be coërced by `get_func_addr!`.
-    fn load_calls_to_struct(addr: u64, size: u64) -> (Self, Self) {
+    ///
+    unsafe fn load_calls_to_struct(addr: u64, size: u64) -> (Self, Self) {
         let mut decoder = load_decoder(addr, size);
         let mut func_list: [usize; MAX_ITEM_SIZE] = [0; MAX_ITEM_SIZE];
         let mut ptr_list: [usize; MAX_ITEM_SIZE] = [0; MAX_ITEM_SIZE];

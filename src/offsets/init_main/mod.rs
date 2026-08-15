@@ -1,11 +1,11 @@
 mod scrt_init;
 mod win_main;
 pub struct InitMain {
-    scrt_init_map: scrt_init::STRUCT_MAP,
-    scrt_init_callers: scrt_init::STRUCT_MAP,
+    pub scrt_init_map: scrt_init::STRUCT_MAP,
+    pub scrt_init_callers: scrt_init::STRUCT_MAP,
 
-    win_main_map: win_main::STRUCT_MAP,
-    win_main_callers: win_main::STRUCT_MAP,
+    pub win_main_map: win_main::STRUCT_MAP,
+    pub win_main_callers: win_main::STRUCT_MAP,
 
     __xi_a: *const u8,
     __xi_z: *const u8,

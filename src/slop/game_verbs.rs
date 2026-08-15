@@ -77,6 +77,7 @@ impl RecordToggleVerb {
         self.recording = false;
     }
 }
+
 impl Verb for RecordToggleVerb {
     fn do_it(&mut self) {
         if self.recording {

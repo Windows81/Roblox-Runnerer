@@ -74,7 +74,7 @@ pub struct STRUCT_MAP {
 }
 
 pub fn find(scrt_common_main_seh: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    STRUCT_MAP::load_calls_to_struct(scrt_common_main_seh, 0x171)
+    unsafe { STRUCT_MAP::load_calls_to_struct(scrt_common_main_seh, 0x171) }
 }
 
 // According to Studio v548

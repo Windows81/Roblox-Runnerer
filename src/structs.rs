@@ -20,6 +20,11 @@ pub struct shared_ptr<T> {
 }
 
 #[repr(C)]
+pub struct if_stream {
+    _unknown: [u8; 0x110],
+}
+
+#[repr(C)]
 struct rbx_signal
 // sizeof=0x18
 {

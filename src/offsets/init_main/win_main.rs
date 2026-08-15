@@ -30,7 +30,7 @@ pub struct STRUCT_MAP {
 }
 
 pub fn find(win_main_addr: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    STRUCT_MAP::load_calls_to_struct(win_main_addr, 0x19A)
+    unsafe { STRUCT_MAP::load_calls_to_struct(win_main_addr, 0x19A) }
 }
 
 // According to Studio v548
