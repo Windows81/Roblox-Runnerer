@@ -1,120 +1,80 @@
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use iced_x86::code_asm::*;
 
-/// Patches the target DLL to change its entry point to `mov rax, 1; ret`
-/// and forces the IMAGE_FILE_DLL characteristic bit.
+const IMAGE_FILE_DLL: u16 = 0x2000;
+
+fn read_u16(f: &mut File, at: u64) -> std::io::Result<u16> {
+    let mut buf = [0u8; 2];
+    f.seek(SeekFrom::Start(at))?;
+    f.read_exact(&mut buf)?;
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn read_u32(f: &mut File, at: u64) -> std::io::Result<u32> {
+    let mut buf = [0u8; 4];
+    f.seek(SeekFrom::Start(at))?;
+    f.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+/// Copies the exe to `dll_name`, stubs its entry point with `mov eax, 1; ret`
+/// and flips on IMAGE_FILE_DLL so LoadLibrary will take it.
+///
+/// Returns the RVA of the original entry point.
 pub fn patch_dll(
-    dir_path: &Path,
+    dir: &Path,
     exe_name: &str,
     dll_name: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    let read_path = dir_path.join(exe_name);
-    let write_path = dir_path.join(dll_name);
+    let mut exe = File::open(dir.join(exe_name))?;
+    let mut dll = File::create(dir.join(dll_name))?;
+    std::io::copy(&mut exe, &mut dll)?;
 
-    let mut read_file = File::open(read_path)?;
-    let mut write_file = File::create(write_path)?;
+    // e_lfanew lives at 0x3C in the DOS header
+    let file_header = read_u32(&mut exe, 0x3C)? as u64;
+    let opt_header = file_header + 0x18;
 
-    std::io::copy(&mut read_file, &mut write_file)?;
-
-    let mut e_lfanew_buf = [0u8; 4];
-    read_file.seek(SeekFrom::Start(0x3C))?;
-    read_file.read_exact(&mut e_lfanew_buf)?;
-
-    let file_header_offset = u32::from_le_bytes(e_lfanew_buf) as u64;
-    let optional_header_offset = file_header_offset + 0x18;
-
-    let bitness = {
-        let mut buf = [0u8; 2];
-        read_file.seek(SeekFrom::Start(file_header_offset + 0x04))?;
-        read_file.read_exact(&mut buf)?;
-        match u16::from_le_bytes(buf) {
-            0x014C => 32,
-            0x8664 => 64,
-            _ => panic!(),
-        }
+    let bitness = match read_u16(&mut exe, file_header + 0x04)? {
+        0x014C => 32,
+        0x8664 => 64,
+        machine => return Err(format!("unknown machine type {machine:#06x}").into()),
     };
     if bitness != usize::BITS {
         return Err("Bitness does not match; LoadLibrary does not allow cross-arch usage.".into());
     }
 
-    let characteristics = {
-        let mut buf = [0u8; 2];
-        read_file.seek(SeekFrom::Start(file_header_offset + 0x16))?;
-        read_file.read_exact(&mut buf)?;
-        u16::from_le_bytes(buf)
-    };
+    let characteristics = read_u16(&mut exe, file_header + 0x16)?;
+    let opt_header_size = read_u16(&mut exe, file_header + 0x14)? as u64;
+    let entry_rva = read_u32(&mut exe, opt_header + 0x10)?;
 
-    let optional_header_size = {
-        let mut buf = [0u8; 2];
-        read_file.seek(SeekFrom::Start(file_header_offset + 0x14))?;
-        read_file.read_exact(&mut buf)?;
-        u16::from_le_bytes(buf) as u64
-    };
+    // Assume the entry point is in .text, which is the first section.
+    let text = opt_header + opt_header_size;
+    let virtual_addr = read_u32(&mut exe, text + 0x0C)?;
+    let raw_size = read_u32(&mut exe, text + 0x10)?;
+    let raw_ptr = read_u32(&mut exe, text + 0x14)?;
 
-    let entry_point_rva = {
-        let mut buf = [0u8; 4];
-        read_file.seek(SeekFrom::Start(optional_header_offset + 0x10))?;
-        read_file.read_exact(&mut buf)?;
-        u32::from_le_bytes(buf)
-    };
-
-    let section_table_offset = optional_header_offset + optional_header_size;
-
-    // Assume that our relative virtual address is in `.text`, which is the first section.
-    let text_section_offset = section_table_offset + (0 * 0x28);
-
-    let mut buf = [0u8; 4];
-
-    let _virtual_size = {
-        read_file.seek(SeekFrom::Start(text_section_offset + 0x08))?;
-        read_file.read_exact(&mut buf)?;
-        u32::from_le_bytes(buf)
-    };
-
-    let virtual_addr = {
-        read_file.read_exact(&mut buf)?;
-        u32::from_le_bytes(buf)
-    };
-
-    let raw_data_size = {
-        read_file.read_exact(&mut buf)?;
-        u32::from_le_bytes(buf)
-    };
-
-    let raw_data_pointer = {
-        read_file.read_exact(&mut buf)?;
-        u32::from_le_bytes(buf)
-    };
-
-    if entry_point_rva < virtual_addr {
-        return Err("Entry point is lower than bounds of the first PE memory section".into());
-    }
-    if entry_point_rva >= virtual_addr + raw_data_size {
-        return Err("Entry point is higher than bounds of the first PE memory section".into());
+    if entry_rva < virtual_addr || entry_rva >= virtual_addr + raw_size {
+        return Err("Entry point is outside the first PE section".into());
     }
 
-    let entry_point_file_offset = entry_point_rva
-        .wrapping_add(raw_data_pointer)
-        .wrapping_sub(virtual_addr);
+    let entry_offset = entry_rva - virtual_addr + raw_ptr;
 
-    // x86_64 assembly: mov rax, 1; ret
-    let patch_x64_data = {
-        let mut assembler = CodeAssembler::new(bitness)?;
-        assembler.mov(eax, 0x01)?;
-        assembler.ret()?;
-        assembler.assemble(entry_point_file_offset.into())?
+    let stub = {
+        let mut a = CodeAssembler::new(bitness)?;
+        a.mov(eax, 1)?;
+        a.ret()?;
+        a.assemble(entry_offset.into())?
     };
+    dll.seek(SeekFrom::Start(entry_offset as u64))?;
+    dll.write_all(&stub)?;
 
-    write_file.seek(SeekFrom::Start(entry_point_file_offset as u64))?;
-    write_file.write_all(&patch_x64_data)?;
+    dll.seek(SeekFrom::Start(file_header + 0x16))?;
+    dll.write_all(&(characteristics | IMAGE_FILE_DLL).to_le_bytes())?;
 
-    let new_charactertics = characteristics | 0x2000; // Sets IMAGE_FILE_DLL bit to 1.
-    write_file.seek(SeekFrom::Start(file_header_offset + 0x16))?;
-    write_file.write_all(&new_charactertics.to_le_bytes())?;
-    Ok(entry_point_rva as _)
+    Ok(entry_rva as _)
 }

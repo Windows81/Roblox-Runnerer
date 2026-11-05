@@ -127,7 +127,7 @@ fn register_window(hinstance: HINSTANCE) -> Option<HWND> {
     }
 }
 
-pub fn main(data_model_funcs: offsets::datamodel::DataModel) -> windows::core::Result<()> {
+pub fn main(data_model_funcs: offsets::datamodel::DataModelFns) -> windows::core::Result<()> {
     // This binary was compiled with SSE2; G3D::System::hasSSE2() guard omitted
     // (all supported x86-64 targets have SSE2).
     let hinstance = unsafe { GetModuleHandleW(None)? };

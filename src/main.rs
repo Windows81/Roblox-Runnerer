@@ -1,15 +1,19 @@
+pub mod macros;
 pub mod offsets;
 pub mod prep;
-//pub mod slop;
-
-pub mod macros;
 pub mod structs;
+// pub mod slop;
 
-use std::path::Path;
+use std::path::PathBuf;
 
-fn main() {
-    let dir_path = Path::new(r"C:\Users\USER\Projects\FilteringDisabled\Roblox\v463\Studio\");
-    //let dir_path = Path::new(r"C:\Program Files\RobloxStudio548\");
+const DEFAULT_STUDIO_DIR: &str = r"C:\Users\USER\Projects\FilteringDisabled\Roblox\v463\Studio\";
+// const DEFAULT_STUDIO_DIR: &str = r"C:\Program Files\RobloxStudio548\";
 
-    prep::load(dir_path);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let studio_dir = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_STUDIO_DIR));
+
+    prep::load(&studio_dir)
 }

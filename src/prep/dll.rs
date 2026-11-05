@@ -2,35 +2,33 @@ use std::path::Path;
 
 use windows::{
     Win32::{
-        Foundation::{HANDLE, HMODULE},
+        Foundation::HANDLE,
         System::LibraryLoader::{
-            GetProcAddress, LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
-            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
-            LOAD_LIBRARY_SEARCH_USER_DIRS, LoadLibraryExW,
+            LOAD_LIBRARY_FLAGS, LOAD_LIBRARY_SEARCH_APPLICATION_DIR,
+            LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+            LOAD_LIBRARY_SEARCH_SYSTEM32, LOAD_LIBRARY_SEARCH_USER_DIRS, LoadLibraryExW,
         },
     },
     core::HSTRING,
 };
 
-use crate::offsets;
+pub const SEARCH_FLAGS: LOAD_LIBRARY_FLAGS = LOAD_LIBRARY_FLAGS(
+    LOAD_LIBRARY_SEARCH_DEFAULT_DIRS.0
+        | LOAD_LIBRARY_SEARCH_SYSTEM32.0
+        | LOAD_LIBRARY_SEARCH_APPLICATION_DIR.0
+        | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR.0
+        | LOAD_LIBRARY_SEARCH_USER_DIRS.0,
+);
 
-pub fn load(dir_path: &Path, dll_name: &str) -> u64 {
-    let dll_path = dir_path.join(dll_name);
-
-    let flags = LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
-        | LOAD_LIBRARY_SEARCH_SYSTEM32
-        | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
-        | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
-        | LOAD_LIBRARY_SEARCH_USER_DIRS;
-
-    // Load the patched DLL
-    unsafe {
+/// Loads `name` from `dir` and returns its base address.
+pub fn load(dir: &Path, name: &str) -> windows::core::Result<u64> {
+    let path = dir.join(name);
+    let module = unsafe {
         LoadLibraryExW(
-            &HSTRING::from(dll_path.as_os_str()),
+            &HSTRING::from(path.as_os_str()),
             HANDLE(std::ptr::null_mut()),
-            flags,
+            SEARCH_FLAGS,
         )
-    }
-    .unwrap()
-    .0 as u64
+    }?;
+    Ok(module.0 as u64)
 }
