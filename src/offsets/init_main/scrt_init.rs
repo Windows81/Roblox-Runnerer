@@ -1,9 +1,10 @@
-use super::super::util::CallClass;
+use crate::offsets::util::CallClass;
 
-impl CallClass for STRUCT_MAP {}
+/// Every `call` made by `__scrt_common_main_seh`, in order.
+/// Field order has to match the disassembly at the bottom of this file.
 #[derive(Debug)]
 #[repr(C)]
-pub struct STRUCT_MAP {
+pub struct ScrtCalls {
     pub __scrt_common_main_seh: extern "C" fn(),
 
     // BOOL __cdecl __scrt_initialize_crt(__scrt_module_type module_type)
@@ -73,8 +74,10 @@ pub struct STRUCT_MAP {
     pub _exit: extern "C" fn(i32),
 }
 
-pub fn find(scrt_common_main_seh: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    unsafe { STRUCT_MAP::load_calls_to_struct(scrt_common_main_seh, 0x171) }
+impl CallClass for ScrtCalls {}
+
+pub fn find(scrt_common_main_seh: u64) -> (ScrtCalls, ScrtCalls) {
+    unsafe { ScrtCalls::load_calls_to_struct(scrt_common_main_seh, 0x171) }
 }
 
 // According to Studio v548

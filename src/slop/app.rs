@@ -72,7 +72,7 @@ pub struct Args {
 
 /// `RBX::Application`.
 pub struct Application {
-    data_model_funcs: offsets::datamodel::DataModel,
+    data_model_funcs: offsets::datamodel::DataModelFns,
     main_window: usize,
     launch_mode: LaunchMode,
     args: Args,
@@ -97,7 +97,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub fn new(data_model_funcs: offsets::datamodel::DataModel) -> Self {
+    pub fn new(data_model_funcs: offsets::datamodel::DataModelFns) -> Self {
         Self {
             main_window: Default::default(),
             launch_mode: LaunchMode::Play,

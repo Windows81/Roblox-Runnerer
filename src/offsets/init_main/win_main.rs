@@ -1,9 +1,9 @@
-use super::super::util::CallClass;
+use crate::offsets::util::CallClass;
 
-impl CallClass for STRUCT_MAP {}
+/// Every `call` made by `WinMain`, in order (plus WinMain itself in slot 0).
 #[derive(Debug)]
 #[repr(C)]
-pub struct STRUCT_MAP {
+pub struct WinMainCalls {
     // int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
     pub win_main: extern "C" fn(usize, usize, *const i8, i32) -> i32,
 
@@ -29,8 +29,10 @@ pub struct STRUCT_MAP {
     pub op_delete_array_1: extern "C" fn(*const u8, usize),
 }
 
-pub fn find(win_main_addr: u64) -> (STRUCT_MAP, STRUCT_MAP) {
-    unsafe { STRUCT_MAP::load_calls_to_struct(win_main_addr, 0x19A) }
+impl CallClass for WinMainCalls {}
+
+pub fn find(win_main_addr: u64) -> (WinMainCalls, WinMainCalls) {
+    unsafe { WinMainCalls::load_calls_to_struct(win_main_addr, 0x19A) }
 }
 
 // According to Studio v548

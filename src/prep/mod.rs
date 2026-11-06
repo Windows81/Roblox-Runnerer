@@ -8,16 +8,18 @@ mod dll;
 mod patch;
 mod qt;
 
-pub fn load(dir_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let dll_main_rva = patch::patch_dll(dir_path, "RobloxStudioBeta.exe", "RobloxStudioBeta.dll")?;
+const STUDIO_EXE: &str = "RobloxStudioBeta.exe";
+const STUDIO_DLL: &str = "RobloxStudioBeta.dll";
 
-    let _ = unsafe { SetCurrentDirectoryW(&HSTRING::from(dir_path.as_os_str())) };
-    qt::prepare(dir_path, "RobloxStudioBeta.dll")?;
+pub fn load(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let dll_main_rva = patch::patch_dll(dir, STUDIO_EXE, STUDIO_DLL)?;
 
-    let rōblox_dll_ptr = dll::load(dir_path, "RobloxStudioBeta.dll");
-    let routines = offsets::find(rōblox_dll_ptr, dll_main_rva as u64);
-    let data_model_funcs = offsets::datamodel::find(rōblox_dll_ptr);
+    // Studio resolves a lot of its content relative to the cwd.
+    unsafe { SetCurrentDirectoryW(&HSTRING::from(dir.as_os_str()))? };
+    qt::prepare(dir, STUDIO_DLL)?;
 
-    let exe_path = dir_path.join("RobloxStudioBeta.exe");
+    let base = dll::load(dir, STUDIO_DLL)?;
+    let _offsets = offsets::find(base, dll_main_rva as u64);
+
     Ok(())
 }

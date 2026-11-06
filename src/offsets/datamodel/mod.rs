@@ -1,19 +1,16 @@
 use std::{ffi::CString, mem::transmute};
 
 use crate::{
-    offsets::util::load_memory,
+    offsets::util::{CallClass, load_memory},
     structs::{
-        CRenderSettings, DataModelInitializationParams, Game, GameLaunchIntent, GraphicsMode,
-        OSContext, Verb, ViewBase, shared_ptr,
+        CRenderSettings, DataModel, DataModelInitializationParams, Game, GameLaunchIntent,
+        GraphicsMode, OsContext, SharedPtr, Verb, ViewBase,
     },
 };
 
-use super::util::CallClass;
-
-impl CallClass for DataModel {}
 #[derive(Debug)]
 #[repr(C)]
-pub struct DataModel {
+pub struct DataModelFns {
     /// ```cpp
     /// RBX::UnsecuredStudioGame *__fastcall RBX::UnsecuredStudioGame::UnsecuredStudioGame(
     ///    RBX::UnsecuredStudioGame *this,
@@ -26,12 +23,12 @@ pub struct DataModel {
     /// ```
     pub unsecured_studio_game: extern "C" fn(
         this: Game,
-        lockVerb: Verb,
-        baseUrl: CString,
-        isNetworked: bool,
-        shouldShowLoadingScreen: bool,
+        lock_verb: Verb,
+        base_url: CString,
+        is_networked: bool,
+        show_loading_screen: bool,
         intent: GameLaunchIntent,
-        initializationParams: DataModelInitializationParams,
+        params: DataModelInitializationParams,
     ) -> Game,
 
     /// ```cpp
@@ -42,8 +39,8 @@ pub struct DataModel {
     /// ```
     pub create_view: extern "C" fn(
         mode: GraphicsMode,
-        context: OSContext,
-        renderSettings: CRenderSettings,
+        context: OsContext,
+        render_settings: CRenderSettings,
     ) -> ViewBase,
 
     /// ```cpp
@@ -56,29 +53,32 @@ pub struct DataModel {
     ///    const RBX::DataModelInitializationParams *initializationParams)
     /// ```
     pub create_data_model: extern "C" fn(
-        this: shared_ptr<DataModel>,
-        startHeartbeat: bool,
-        lockVerb: Verb,
-        shouldShowLoadingScreen: bool,
+        result: SharedPtr<DataModel>,
+        start_heartbeat: bool,
+        lock_verb: Verb,
+        show_loading_screen: bool,
         intent: GameLaunchIntent,
-        initializationParams: DataModelInitializationParams,
-    ) -> shared_ptr<DataModel>,
+        params: DataModelInitializationParams,
+    ) -> SharedPtr<DataModel>,
 }
 
-pub fn find(rōblox_dll_ptr: u64) -> DataModel {
-    const TEST_VERSION_STR: &[u8] = "0.548.488.5480525".as_bytes();
-    assert_eq!(
-        load_memory(rōblox_dll_ptr + 0x3c068a0, TEST_VERSION_STR.len() as _),
-        TEST_VERSION_STR
-    );
+impl CallClass for DataModelFns {}
+
+// The RVAs below are only valid for this exact build.
+const SUPPORTED_VERSION: &[u8] = b"0.548.488.5480525";
+const VERSION_STRING_RVA: u64 = 0x3C0_68A0;
+
+pub fn find(base: u64) -> DataModelFns {
+    let found = load_memory(base + VERSION_STRING_RVA, SUPPORTED_VERSION.len() as _);
+    assert_eq!(found, SUPPORTED_VERSION, "unsupported Studio build");
+
+    // TODO: build dynamic offset finder for versions other than v548.
     unsafe {
-        let base=
-            // TODO: build dynamic offset finder for versions other than v548.
-            &DataModel {
-                unsecured_studio_game: transmute(0x0BD98E0 as usize),
-                create_view: transmute(0x220ACA0 as usize),
-                create_data_model: transmute(0x12A5680 as usize),
-            };
-        DataModel::with_offset(base, rōblox_dll_ptr as _)
+        let rvas = DataModelFns {
+            unsecured_studio_game: transmute(0x0BD_98E0_usize),
+            create_view: transmute(0x220_ACA0_usize),
+            create_data_model: transmute(0x12A_5680_usize),
+        };
+        rvas.with_offset(base as _)
     }
 }
